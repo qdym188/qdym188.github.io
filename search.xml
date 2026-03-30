@@ -1,6 +1,81 @@
 <?xml version="1.0" encoding="utf-8"?>
 <search>
   <entry>
+    <title>Linux Kernel之进程管理</title>
+    <url>/2026/03/26/linux-kernel-process/</url>
+    <content><![CDATA[<blockquote>
+<p>Linux Kernel 的进程管理是其最核心的子系统之一。本文主要梳理fork&#x2F;exec、调度器(CFS)、进程状态转换的概念和使用方法</p>
+</blockquote>
+<span id="more"></span>
+
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><h2 id="进程管理在-Kernel-中的位置"><a href="#进程管理在-Kernel-中的位置" class="headerlink" title="进程管理在 Kernel 中的位置"></a>进程管理在 Kernel 中的位置</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│              用户空间                    │</span><br><span class="line">│    (Shell、应用程序、系统调用接口)          │</span><br><span class="line">└─────────────────────────────────────────┘</span><br><span class="line">                    │</span><br><span class="line">                    ▼ 系统调用 (int 0x80 / syscall)</span><br><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│           内核空间 - 进程管理子系统         │</span><br><span class="line">│                                         │</span><br><span class="line">│  ┌─────────────┐    ┌─────────────┐     │</span><br><span class="line">│  │  进程调度    │◄──►│  进程控制     │     │</span><br><span class="line">│  │  (Scheduler)│    │  (Fork/Exec)│     │</span><br><span class="line">│  │   CFS/RT    │    │             │     │</span><br><span class="line">│  └─────────────┘    └──────┬──────┘     │</span><br><span class="line">│                            │            │</span><br><span class="line">│  ┌─────────────┐    ┌──────┴──────┐     │ </span><br><span class="line">│  │  进程间通信  │    │  进程生命周期 │      │</span><br><span class="line">│  │ (IPC/信号)  │    │ (创建/终止)  │      │</span><br><span class="line">│  └─────────────┘    └─────────────┘     │</span><br><span class="line">│                                         │</span><br><span class="line">│  核心数据结构：task_struct、mm_struct、    │</span><br><span class="line">│             files_struct、signal_struct │</span><br><span class="line">└─────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
+
+<h2 id="Fork：进程的”自我复制”"><a href="#Fork：进程的”自我复制”" class="headerlink" title="Fork：进程的”自我复制”"></a>Fork：进程的”自我复制”</h2><p>一句话定义： fork() &#x3D; 细胞分裂。一个进程变成两个几乎完全相同的进程，父子共享代码，独立运行。</p>
+<h2 id="Exec"><a href="#Exec" class="headerlink" title="Exec:"></a>Exec:</h2><h2 id="CFS是什么"><a href="#CFS是什么" class="headerlink" title="CFS是什么"></a>CFS是什么</h2><p>CFS（Completely Fair Scheduler，完全公平调度器） &#x3D; Linux 的默认进程调度器，自 2.6.23（2007年）取代 O(1) 调度器，追求公平性而非绝对效率。</p>
+<p>核心思想：</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">让每个进程获得 &quot;公平的 CPU 时间份额&quot;</span><br><span class="line">    ↓</span><br><span class="line">用虚拟时间 vruntime 衡量&quot;应得&quot; vs &quot;实际获得&quot;</span><br><span class="line">    ↓</span><br><span class="line">总是选择 vruntime 最小的进程运行（最&quot;亏&quot;的优先补偿）</span><br></pre></td></tr></table></figure>
+
+<h2 id="CFS数据结构"><a href="#CFS数据结构" class="headerlink" title="CFS数据结构"></a>CFS数据结构</h2><h3 id="1-调度实体（sched-entity）"><a href="#1-调度实体（sched-entity）" class="headerlink" title="1. 调度实体（sched_entity）"></a>1. 调度实体（sched_entity）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// include/linux/sched.h</span><br><span class="line">struct sched_entity &#123;</span><br><span class="line">    struct load_weight  load;        // 权重（nice 值转换）</span><br><span class="line">    struct rb_node      run_node;    // 红黑树节点</span><br><span class="line">    u64                 vruntime;    // ⭐ 虚拟运行时间（关键）</span><br><span class="line">    u64                 exec_start;  // 开始执行时间</span><br><span class="line">    u64                 sum_exec_runtime;  // 总运行时间</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<h3 id="2-CFS-运行队列（cfs-rq）"><a href="#2-CFS-运行队列（cfs-rq）" class="headerlink" title="2. CFS 运行队列（cfs_rq）"></a>2. CFS 运行队列（cfs_rq）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// kernel/sched/sched.h</span><br><span class="line">struct cfs_rq &#123;</span><br><span class="line">    struct rb_root_cached  tasks_timeline;  // ⭐ 红黑树根</span><br><span class="line">    struct sched_entity    *curr;           // 当前运行进程</span><br><span class="line">    u64                    min_vruntime;      // 队列最小 vruntime</span><br><span class="line">    unsigned long          load_weight;     // 队列总权重</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<h2 id="CFS核心机制：红黑树-vruntime"><a href="#CFS核心机制：红黑树-vruntime" class="headerlink" title="CFS核心机制：红黑树 + vruntime"></a>CFS核心机制：红黑树 + vruntime</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│           CFS 红黑树结构                 │</span><br><span class="line">│                                         │</span><br><span class="line">│              [P3: v=30]                 │</span><br><span class="line">│             /          \                │</span><br><span class="line">│      [P1: v=10]      [P5: v=50]         │</span><br><span class="line">│        /    \          /                │</span><br><span class="line">│  [P0: v=5] [P2: v=20] [P4: v=40]        │</span><br><span class="line">│                                         │</span><br><span class="line">│  最左侧节点 P0 (vruntime 最小) ← 下一个运行 │</span><br><span class="line">│                                         │</span><br><span class="line">│  插入位置：根据 vruntime 排序            │</span><br><span class="line">│  查询：O(log n) 取最左节点（实际优化为 O(1)）│</span><br><span class="line">└─────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
+<h3 id="vruntime-计算详解"><a href="#vruntime-计算详解" class="headerlink" title="vruntime 计算详解"></a>vruntime 计算详解</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 核心计算（kernel/sched/fair.c）</span><br><span class="line">vruntime += delta_exec * (NICE_0_LOAD / se-&gt;load.weight)</span><br><span class="line"></span><br><span class="line">// 其中：</span><br><span class="line">// delta_exec = 实际运行时间（纳秒）</span><br><span class="line">// NICE_0_LOAD = 1024（nice 0 的基准权重）</span><br><span class="line">// se-&gt;load.weight = 当前进程权重（由 nice 值决定）</span><br></pre></td></tr></table></figure>
+<ul>
+<li>nice 值小的进程（高优先级），vruntime 增长慢 → 更容易被选中</li>
+<li>nice 值大的进程（低优先级），vruntime 增长快 → 等待时间更长</li>
+</ul>
+<h3 id="CFS-与实时调度器对比"><a href="#CFS-与实时调度器对比" class="headerlink" title="CFS 与实时调度器对比"></a>CFS 与实时调度器对比</h3><table>
+<thead>
+<tr>
+<th>特性</th>
+<th>CFS（SCHED_NORMAL）</th>
+<th>实时调度器（SCHED_FIFO&#x2F;RR）</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>目标</td>
+<td>公平分享 CPU</td>
+<td>绝对优先级</td>
+</tr>
+<tr>
+<td>算法</td>
+<td>红黑树 + vruntime</td>
+<td>优先级队列</td>
+</tr>
+<tr>
+<td>抢占</td>
+<td>自愿（时间片用完）</td>
+<td>强制（高优先级立即抢占）</td>
+</tr>
+<tr>
+<td>nice&#x2F;优先级</td>
+<td>nice -20~+19</td>
+<td>1~99（实时优先级）</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>普通进程</td>
+<td>实时任务（音视频、控制）</td>
+</tr>
+</tbody></table>
+<h3 id="CFS-的局限与演进"><a href="#CFS-的局限与演进" class="headerlink" title="CFS 的局限与演进"></a>CFS 的局限与演进</h3><p>局限</p>
+<ol>
+<li>对延迟敏感任务不友好（vruntime 累积延迟）</li>
+<li>多核负载均衡开销大</li>
+<li>无法感知业务优先级（仅 nice 值）</li>
+</ol>
+<p>演进：Sched Ext（BPF 调度器）</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Linux 6.12+ 引入，允许 BPF 编写自定义调度策略</span><br><span class="line">SEC(&quot;sched_ext&quot;)</span><br><span class="line">int my_ai_scheduler(struct task_struct *p)</span><br><span class="line">&#123;</span><br><span class="line">    // 自定义逻辑：优先调度 AI 推理任务</span><br><span class="line">    if (is_ai_inference_task(p))</span><br><span class="line">        return SCX_WAKE_KICK;</span><br><span class="line">    </span><br><span class="line">    return SCX_WAKE_IDLE;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Linux开发</category>
+      </categories>
+      <tags>
+        <tag>Linux kernel</tag>
+        <tag>进程管理</tag>
+        <tag>基础概念</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Hexo + GitHub Pages 完整指南：从安装到美化</title>
     <url>/2026/03/18/hexo-github-pages-guide/</url>
     <content><![CDATA[<blockquote>
@@ -201,6 +276,127 @@
         <tag>GitHub Pages</tag>
         <tag>博客搭建</tag>
         <tag>教程</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux Kernel之Kernel C</title>
+    <url>/2026/03/26/linux-kernel-c/</url>
+    <content><![CDATA[<blockquote>
+<p>Linux Kernel 主要用 C 语言编写，同时包含少量汇编和辅助语言，本文总结Kernel中的主要知识点</p>
+</blockquote>
+<span id="more"></span>
+
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#%E7%9B%AE%E5%BD%95">目录</a></li>
+<li><a href="#%E8%AF%AD%E8%A8%80%E6%9E%84%E6%88%90">语言构成</a></li>
+<li><a href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E7%94%A8-c-%E8%AF%AD%E8%A8%80">为什么用 C 语言？</a></li>
+<li><a href="#kernel-c-%E4%B8%8E%E6%99%AE%E9%80%9A-c-%E7%9A%84%E5%8C%BA%E5%88%AB">Kernel C 与普通 C 的区别</a><ul>
+<li><a href="#%E6%B2%A1%E6%9C%89%E6%A0%87%E5%87%86%E5%BA%93">没有标准库</a></li>
+<li><a href="#%E6%B2%A1%E6%9C%89%E6%B5%AE%E7%82%B9%E8%BF%90%E7%AE%97">没有浮点运算</a></li>
+<li><a href="#%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E5%8F%97%E9%99%90">内存管理受限</a></li>
+<li><a href="#%E5%B9%B6%E5%8F%91%E7%BC%96%E7%A8%8B%E5%A4%8D%E6%9D%82">并发编程复杂</a></li>
+<li><a href="#%E5%86%85%E8%81%94%E6%B1%87%E7%BC%96">内联汇编</a></li>
+</ul>
+</li>
+<li><a href="#%E6%8C%87%E9%92%88%E5%92%8C%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86">指针和内存管理</a><ul>
+<li><a href="#kernel%E6%8C%87%E9%92%88%E7%9A%84%E7%89%B9%E6%AE%8A%E6%80%A7">Kernel指针的特殊性</a><ul>
+<li><a href="#1%E5%A4%9A%E7%A7%8D%E5%9C%B0%E5%9D%80%E7%A9%BA%E9%97%B4">1.多种地址空间</a></li>
+<li><a href="#2%E6%8C%87%E9%92%88%E7%B1%BB%E5%9E%8B%E6%A0%87%E8%AE%B0sparse-%E6%A3%80%E6%9F%A5">2.指针类型标记（Sparse 检查）</a></li>
+</ul>
+</li>
+</ul>
+</li>
+<li><a href="#kernel-%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86%E6%A0%B8%E5%BF%83%E6%9C%BA%E5%88%B6">Kernel 内存管理核心机制</a><ul>
+<li><a href="#%E5%86%85%E5%AD%98%E5%88%86%E5%8C%BAzone">内存分区（Zone）</a></li>
+<li><a href="#%E9%A1%B5%E5%88%86%E9%85%8Dpage-%E7%BA%A7">页分配（Page 级）</a></li>
+<li><a href="#slab-%E5%88%86%E9%85%8D%E5%99%A8%E5%AF%B9%E8%B1%A1%E7%BA%A7">Slab 分配器（对象级）</a></li>
+<li><a href="#%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86vmalloc-vs-kmalloc">虚拟内存管理（vmalloc vs kmalloc）</a></li>
+</ul>
+</li>
+<li><a href="#%E5%86%85%E5%AD%98%E6%B3%84%E6%BC%8F%E4%B8%8E%E8%B0%83%E8%AF%95">内存泄漏与调试</a><ul>
+<li><a href="#%E5%BC%95%E7%94%A8%E8%AE%A1%E6%95%B0kref">引用计数（Kref）</a></li>
+<li><a href="#%E5%86%85%E5%AD%98%E8%B0%83%E8%AF%95%E5%B7%A5%E5%85%B7">内存调试工具</a></li>
+</ul>
+</li>
+<li><a href="#%E8%BF%9B%E7%A8%8B%E7%8A%B6%E6%80%81%E8%BD%AC%E6%8D%A2">进程状态转换</a><ul>
+<li><a href="#%E8%BF%9B%E7%A8%8B%E7%8A%B6%E6%80%81%E5%AE%9A%E4%B9%89">进程状态定义</a></li>
+<li><a href="#%E7%AE%80%E5%8C%96%E7%8A%B6%E6%80%81%E5%9B%BE">简化状态图：</a></li>
+<li><a href="#%E7%8A%B6%E6%80%81%E8%BD%AC%E6%8D%A2%E5%AE%8C%E6%95%B4%E6%B5%81%E7%A8%8B%E5%9B%BE">状态转换完整流程图</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="语言构成"><a href="#语言构成" class="headerlink" title="语言构成"></a>语言构成</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| 语言                    | 占比        | 用途                     |</span><br><span class="line">| ---------------------  | ---------   | ---------------------- |</span><br><span class="line">| **C 语言**              | ~98%        | 核心代码、驱动、文件系统、网络栈等      |</span><br><span class="line">| **汇编 (Assembly)**     | ~1%         | 启动代码、中断处理、架构相关底层操作     |</span><br><span class="line">| **Rust**               | &lt;1%（快速增长） | 新驱动、内存安全模块（Linux 6.1+） |</span><br><span class="line">| **Python/Perl/Shell**  | 构建工具      | 脚本配置、代码生成、测试           |</span><br></pre></td></tr></table></figure>
+
+<h2 id="为什么用-C-语言？"><a href="#为什么用-C-语言？" class="headerlink" title="为什么用 C 语言？"></a>为什么用 C 语言？</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| 特性        | 原因                 |</span><br><span class="line">| --------- | ------------------ |</span><br><span class="line">| **底层控制**  | 直接操作内存、寄存器、硬件      |</span><br><span class="line">| **性能**    | 编译为机器码，无运行时开销      |</span><br><span class="line">| **可移植性**  | 几乎所有架构都有 C 编译器     |</span><br><span class="line">| **稳定成熟**  | 1972 年诞生，经过 50 年验证 |</span><br><span class="line">| **与硬件接近** | 支持内联汇编、内存布局精确控制    |</span><br></pre></td></tr></table></figure>
+<h2 id="Kernel-C-与普通-C-的区别"><a href="#Kernel-C-与普通-C-的区别" class="headerlink" title="Kernel C 与普通 C 的区别"></a>Kernel C 与普通 C 的区别</h2><h3 id="没有标准库"><a href="#没有标准库" class="headerlink" title="没有标准库"></a>没有标准库</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 用户程序</span><br><span class="line">#include &lt;stdio.h&gt;   // ❌ Kernel 不能用</span><br><span class="line">printf(&quot;hello&quot;);     // ❌ 没有 printf</span><br><span class="line"></span><br><span class="line">// Kernel 代码</span><br><span class="line">#include &lt;linux/kernel.h&gt;  // ✅ Kernel 头文件</span><br><span class="line">printk(KERN_INFO &quot;hello&quot;); // ✅ Kernel 打印函数</span><br></pre></td></tr></table></figure>
+<h3 id="没有浮点运算"><a href="#没有浮点运算" class="headerlink" title="没有浮点运算"></a>没有浮点运算</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">double x = 1.5;  // ❌ Kernel 禁止浮点</span><br><span class="line">// 原因：保存/恢复浮点寄存器开销大，且不是所有架构都支持</span><br></pre></td></tr></table></figure>
+<h3 id="内存管理受限"><a href="#内存管理受限" class="headerlink" title="内存管理受限"></a>内存管理受限</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 用户程序</span><br><span class="line">int *p = malloc(100);  // ❌ 没有 malloc</span><br><span class="line">free(p);               // ❌ 没有 free</span><br><span class="line"></span><br><span class="line">// Kernel 代码</span><br><span class="line">void *p = kmalloc(100, GFP_KERNEL);  // ✅ Kernel 内存分配</span><br><span class="line">kfree(p);                            // ✅ Kernel 释放</span><br></pre></td></tr></table></figure>
+
+<h3 id="并发编程复杂"><a href="#并发编程复杂" class="headerlink" title="并发编程复杂"></a>并发编程复杂</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Kernel 必须考虑多 CPU、中断、抢占</span><br><span class="line">spinlock_t lock;</span><br><span class="line">spin_lock(&amp;lock);     // 获取锁</span><br><span class="line">// 临界区代码</span><br><span class="line">spin_unlock(&amp;lock);   // 释放锁</span><br></pre></td></tr></table></figure>
+
+<h3 id="内联汇编"><a href="#内联汇编" class="headerlink" title="内联汇编"></a>内联汇编</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 直接嵌入汇编代码（架构相关）</span><br><span class="line">static inline unsigned long read_cr3(void)</span><br><span class="line">&#123;</span><br><span class="line">    unsigned long val;</span><br><span class="line">    asm volatile(&quot;mov %%cr3, %0&quot; : &quot;=r&quot; (val));</span><br><span class="line">    return val;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h2 id="指针和内存管理"><a href="#指针和内存管理" class="headerlink" title="指针和内存管理"></a>指针和内存管理</h2><h3 id="Kernel指针的特殊性"><a href="#Kernel指针的特殊性" class="headerlink" title="Kernel指针的特殊性"></a>Kernel指针的特殊性</h3><h4 id="1-多种地址空间"><a href="#1-多种地址空间" class="headerlink" title="1.多种地址空间"></a>1.多种地址空间</h4><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Kernel 中指针可能指向不同地址空间</span><br><span class="line">void *ptr;           // 虚拟地址（最常用）</span><br><span class="line">phys_addr_t paddr;   // 物理地址</span><br><span class="line">dma_addr_t daddr;    // DMA 总线地址</span><br><span class="line">__iomem void *io;    // 设备 I/O 内存（MMIO）</span><br></pre></td></tr></table></figure>
+<p>关键区别：</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| 类型     | 说明                | 转换                                   |</span><br><span class="line">| ------ | ----------------- | ------------------------------------ |</span><br><span class="line">| 用户虚拟地址 | 进程私有空间 0-3GB      | `copy_from_user()`                   |</span><br><span class="line">| 内核虚拟地址 | 内核空间 3GB-4GB（32位） | 直接解引用                                |</span><br><span class="line">| 物理地址   | RAM 硬件地址          | `virt_to_phys()` / `phys_to_virt()`  |</span><br><span class="line">| I/O 内存 | 设备寄存器映射           | `ioremap()` / `readl()` / `writel()` |</span><br></pre></td></tr></table></figure>
+
+<h4 id="2-指针类型标记（Sparse-检查）"><a href="#2-指针类型标记（Sparse-检查）" class="headerlink" title="2.指针类型标记（Sparse 检查）"></a>2.指针类型标记（Sparse 检查）</h4><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Kernel 使用 __user、__kernel、__iomem 等标记</span><br><span class="line">// 帮助静态检查工具发现错误</span><br><span class="line"></span><br><span class="line">int copy_from_user(void *dst, const void __user *src, size_t n);</span><br><span class="line">//                    ↑ 内核空间      ↑ 用户空间指针标记</span><br><span class="line"></span><br><span class="line">void __iomem *reg = ioremap(0xFE000000, 0x1000);</span><br><span class="line">readl(reg);  // ✅ 正确</span><br><span class="line">*reg = 1;    // ❌ Sparse 会警告，必须用 writel()</span><br></pre></td></tr></table></figure>
+
+<h2 id="Kernel-内存管理核心机制"><a href="#Kernel-内存管理核心机制" class="headerlink" title="Kernel 内存管理核心机制"></a>Kernel 内存管理核心机制</h2><h3 id="内存分区（Zone）"><a href="#内存分区（Zone）" class="headerlink" title="内存分区（Zone）"></a>内存分区（Zone）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">物理内存 4GB</span><br><span class="line">├─ Zone DMA      (0-16MB)      ISA 设备兼容</span><br><span class="line">├─ Zone DMA32    (0-4GB)       32位设备兼容  </span><br><span class="line">└─ Zone Normal   (896MB-4GB)   常规内存（64位系统）</span><br></pre></td></tr></table></figure>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 分配时指定区域</span><br><span class="line">kmalloc(size, GFP_DMA);     // 必须从 DMA 区域分配</span><br><span class="line">kmalloc(size, GFP_KERNEL);  // 常规分配，可能阻塞</span><br><span class="line">kmalloc(size, GFP_ATOMIC);  // 原子分配，不阻塞，中断上下文用</span><br></pre></td></tr></table></figure>
+<h3 id="页分配（Page-级）"><a href="#页分配（Page-级）" class="headerlink" title="页分配（Page 级）"></a>页分配（Page 级）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 分配 2^order 个连续物理页</span><br><span class="line">struct page *page = alloc_pages(GFP_KERNEL, order);</span><br><span class="line">// order=0: 1页(4KB), order=3: 8页(32KB)</span><br><span class="line"></span><br><span class="line">void *vaddr = page_address(page);  // 转为虚拟地址</span><br><span class="line">// 使用...</span><br><span class="line">__free_pages(page, order);         // 释放</span><br></pre></td></tr></table></figure>
+<h3 id="Slab-分配器（对象级）"><a href="#Slab-分配器（对象级）" class="headerlink" title="Slab 分配器（对象级）"></a>Slab 分配器（对象级）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 频繁分配/释放小对象（如 task_struct, inode）</span><br><span class="line">struct kmem_cache *cache;</span><br><span class="line"></span><br><span class="line">// 创建缓存</span><br><span class="line">cache = kmem_cache_create(&quot;my_struct&quot;, </span><br><span class="line">                          sizeof(struct my_struct),</span><br><span class="line">                          0, SLAB_HWCACHE_ALIGN, NULL);</span><br><span class="line"></span><br><span class="line">// 分配对象</span><br><span class="line">struct my_struct *obj = kmem_cache_alloc(cache, GFP_KERNEL);</span><br><span class="line"></span><br><span class="line">// 释放</span><br><span class="line">kmem_cache_free(cache, obj);</span><br><span class="line">kmem_cache_destroy(cache);</span><br></pre></td></tr></table></figure>
+<p>实际使用：kmalloc 内部就是 slab 的包装</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">void *ptr = kmalloc(128, GFP_KERNEL);  // 从合适的 slab 分配</span><br><span class="line">kfree(ptr);</span><br></pre></td></tr></table></figure>
+<h3 id="虚拟内存管理（vmalloc-vs-kmalloc）"><a href="#虚拟内存管理（vmalloc-vs-kmalloc）" class="headerlink" title="虚拟内存管理（vmalloc vs kmalloc）"></a>虚拟内存管理（vmalloc vs kmalloc）</h3><table>
+<thead>
+<tr>
+<th>特性</th>
+<th>kmalloc</th>
+<th>vmalloc</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>物理连续性</td>
+<td>✅ 连续</td>
+<td>❌ 不连续（页表映射）</td>
+</tr>
+<tr>
+<td>虚拟地址范围</td>
+<td>直接映射区（小）</td>
+<td>动态映射区（大）</td>
+</tr>
+<tr>
+<td>大小限制</td>
+<td>128KB（默认）</td>
+<td>接近物理内存</td>
+</tr>
+<tr>
+<td>速度</td>
+<td>快</td>
+<td>慢（需修改页表）</td>
+</tr>
+<tr>
+<td>典型用途</td>
+<td>小对象、DMA 缓冲区</td>
+<td>大内存分配、模块加载</td>
+</tr>
+</tbody></table>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// kmalloc - 物理连续，适合硬件 DMA</span><br><span class="line">void *ptr = kmalloc(4096, GFP_KERNEL);</span><br><span class="line">kfree(ptr);</span><br><span class="line"></span><br><span class="line">// vmalloc - 虚拟连续，物理不连续</span><br><span class="line">void *ptr = vmalloc(1024 * 1024);  // 1MB</span><br><span class="line">vfree(ptr);</span><br></pre></td></tr></table></figure>
+
+<h2 id="内存泄漏与调试"><a href="#内存泄漏与调试" class="headerlink" title="内存泄漏与调试"></a>内存泄漏与调试</h2><h3 id="引用计数（Kref）"><a href="#引用计数（Kref）" class="headerlink" title="引用计数（Kref）"></a>引用计数（Kref）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">struct kref &#123;</span><br><span class="line">    refcount_t refcount;</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">void kref_init(struct kref *kref);</span><br><span class="line">void kref_get(struct kref *kref);      // 引用 +1</span><br><span class="line">int kref_put(struct kref *kref, void (*release)(struct kref *kref));  // 引用 -1，为0时释放</span><br></pre></td></tr></table></figure>
+<h3 id="内存调试工具"><a href="#内存调试工具" class="headerlink" title="内存调试工具"></a>内存调试工具</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line"># 1. Kmemleak - 检测内存泄漏</span><br><span class="line">echo scan &gt; /sys/kernel/debug/kmemleak</span><br><span class="line">cat /sys/kernel/debug/kmemleak</span><br><span class="line"></span><br><span class="line"># 2. Slub Debug - 检测越界、use-after-free</span><br><span class="line">slub_debug=FPZU boot 参数</span><br><span class="line"></span><br><span class="line"># 3. KASAN - 地址消毒器（类似 ASan）</span><br><span class="line">CONFIG_KASAN=y  # 编译时开启</span><br></pre></td></tr></table></figure>
+
+<h2 id="进程状态转换"><a href="#进程状态转换" class="headerlink" title="进程状态转换"></a>进程状态转换</h2><h3 id="进程状态定义"><a href="#进程状态定义" class="headerlink" title="进程状态定义"></a>进程状态定义</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// include/linux/sched.h</span><br><span class="line"></span><br><span class="line">#define TASK_RUNNING            0   // ⭐ 运行态（就绪或正在执行）</span><br><span class="line">#define TASK_INTERRUPTIBLE      1   // ⭐ 可中断睡眠（等事件/信号）</span><br><span class="line">#define TASK_UNINTERRUPTIBLE    2   // ⭐ 不可中断睡眠（等事件，忽略信号）</span><br><span class="line">#define __TASK_STOPPED          4   // 停止（调试/信号）</span><br><span class="line">#define __TASK_TRACED           8   // 被跟踪（ptrace）</span><br><span class="line">#define TASK_PARKED            64   // 线程 park（热插拔）</span><br><span class="line">#define TASK_DEAD             128   // 死亡（已释放资源）</span><br><span class="line">#define TASK_WAKEKILL        128   // 可被致命信号唤醒</span><br><span class="line">#define TASK_WAKING          256   // 正在唤醒中</span><br><span class="line">#define TASK_NOLOAD          512   // 不计入负载</span><br><span class="line">#define TASK_NEW            2048   // 刚创建未运行</span><br><span class="line">#define TASK_STATE_MAX      4096</span><br></pre></td></tr></table></figure>
+<h3 id="简化状态图："><a href="#简化状态图：" class="headerlink" title="简化状态图："></a>简化状态图：</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">                 ┌─────────────┐</span><br><span class="line">      ┌─────────│  TASK_NEW   │─────────┐</span><br><span class="line">      │         │  (新创建)    │         │</span><br><span class="line">      │         └─────────────┘         │</span><br><span class="line">      │                │                │</span><br><span class="line">      ▼                ▼                ▼</span><br><span class="line">┌─────────┐      ┌─────────┐      ┌─────────┐</span><br><span class="line">│ RUNNING │◄────►│RUNNABLE │      │  EXIT   │</span><br><span class="line">│ (运行中) │      │(就绪队列)│      │(僵尸/死亡)│</span><br><span class="line">└────┬────┘      └────┬────┘      └─────────┘</span><br><span class="line">     │                ▲</span><br><span class="line">     │ sleep          │ wake_up</span><br><span class="line">     ▼                │</span><br><span class="line">┌─────────┐      ┌─────────┐</span><br><span class="line">│INTERRUPT│      │UNINTERR │</span><br><span class="line">│(可中断睡)│      │(不可中断)│</span><br><span class="line">│  (S)    │      │  (D)    │</span><br><span class="line">└────┬────┘      └────┬────┘</span><br><span class="line">     │ signal         │</span><br><span class="line">     └────────────────┘</span><br></pre></td></tr></table></figure>
+<h3 id="状态转换完整流程图"><a href="#状态转换完整流程图" class="headerlink" title="状态转换完整流程图"></a>状态转换完整流程图</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">用户态                              内核态</span><br><span class="line">─────────────────────────────────────────────────────────</span><br><span class="line">fork() ─────────────────────────► do_fork()</span><br><span class="line">                                   │</span><br><span class="line">                                   ▼</span><br><span class="line">                              TASK_NEW</span><br><span class="line">                                   │</span><br><span class="line">                                   ▼</span><br><span class="line">                              wake_up_new_task()</span><br><span class="line">                                   │</span><br><span class="line">                                   ▼</span><br><span class="line">┌─────────────────────────────────────────────────────────┐</span><br><span class="line">│                      TASK_RUNNING                        │</span><br><span class="line">│  ┌─────────────┐      ┌─────────────┐      ┌─────────┐ │</span><br><span class="line">│  │  时间片用完  │      │  等待 IO    │      │  退出   │ │</span><br><span class="line">│  │  schedule() │      │  wait_event │      │ exit()  │ │</span><br><span class="line">│  └──────┬──────┘      └──────┬──────┘      └────┬────┘ │</span><br><span class="line">│         │                    │                   │      │</span><br><span class="line">│         ▼                    ▼                   ▼      │</span><br><span class="line">│    ┌─────────┐         ┌─────────┐         ┌────────┐  │</span><br><span class="line">│    │RUNNABLE │         │SLEEPING │         │ZOMBIE  │  │</span><br><span class="line">│    │(就绪队列)│         │(I/D状态) │         │(等回收) │  │</span><br><span class="line">│    └────┬────┘         └────┬────┘         └────┬───┘  │</span><br><span class="line">│         │                   │                   │       │</span><br><span class="line">│         │              wake_up()            waitpid()   │</span><br><span class="line">│         │                   │                   │       │</span><br><span class="line">│         └───────────────────┴───────────────────┘       │</span><br><span class="line">│                             │                           │</span><br><span class="line">│                             ▼                           │</span><br><span class="line">│                       TASK_RUNNING                       │</span><br><span class="line">└─────────────────────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>]]></content>
+      <categories>
+        <category>Linux开发</category>
+      </categories>
+      <tags>
+        <tag>Linux kernel</tag>
+        <tag>C语言</tag>
+        <tag>基础知识</tag>
       </tags>
   </entry>
 </search>
