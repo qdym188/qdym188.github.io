@@ -1,0 +1,310 @@
+<!DOCTYPE html><html lang="ch-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>linux kernel之内存管理 | 芯片码工的碎碎念</title><meta name="author" content="Cosmo Qiu"><meta name="copyright" content="Cosmo Qiu"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="目录 目录 一、物理内存 vs 虚拟内存 二、页表（Page Table） 为什么需要页表？ 关键数据结构   三、malloc 底层实现 用户态 malloc 调用链 内核态实现 malloc 分配策略 触发条件 OOM Killer 选择算法（oom_badness） 选择优先级（简化） OOM 日志分析 手动触发 OOM（测试用）    一、物理内存 vs 虚拟内存核心概念对比    特性">
+<meta property="og:type" content="article">
+<meta property="og:title" content="linux kernel之内存管理">
+<meta property="og:url" content="https://qdym188.github.io/2026/03/31/linux-kernel-memory-management/index.html">
+<meta property="og:site_name" content="芯片码工的碎碎念">
+<meta property="og:description" content="目录 目录 一、物理内存 vs 虚拟内存 二、页表（Page Table） 为什么需要页表？ 关键数据结构   三、malloc 底层实现 用户态 malloc 调用链 内核态实现 malloc 分配策略 触发条件 OOM Killer 选择算法（oom_badness） 选择优先级（简化） OOM 日志分析 手动触发 OOM（测试用）    一、物理内存 vs 虚拟内存核心概念对比    特性">
+<meta property="og:locale" content="ch_CN">
+<meta property="og:image" content="https://qdym188.github.io/img/butterfly-icon.png">
+<meta property="article:published_time" content="2026-03-31T08:19:54.000Z">
+<meta property="article:modified_time" content="2026-03-31T08:53:31.955Z">
+<meta property="article:author" content="Cosmo Qiu">
+<meta property="article:tag" content="Linux kernel">
+<meta property="article:tag" content="内存管理">
+<meta property="article:tag" content="基础知识">
+<meta property="article:tag" content="大模型">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://qdym188.github.io/img/butterfly-icon.png"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "linux kernel之内存管理",
+  "url": "https://qdym188.github.io/2026/03/31/linux-kernel-memory-management/",
+  "image": "https://qdym188.github.io/img/butterfly-icon.png",
+  "datePublished": "2026-03-31T08:19:54.000Z",
+  "dateModified": "2026-03-31T08:53:31.955Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "Cosmo Qiu",
+      "url": "https://qdym188.github.io"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://qdym188.github.io/2026/03/31/linux-kernel-memory-management/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: 'Copy Successful',
+    error: 'Copy Failed',
+    noSupport: 'Browser Not Supported'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: 'Just now',
+    min: 'minutes ago',
+    hour: 'hours ago',
+    day: 'days ago',
+    month: 'months ago'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: 'Load More'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'linux kernel之内存管理',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">芯片码工的碎碎念</span></a><a class="nav-page-title" href="/"><span class="site-name">linux kernel之内存管理</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"></div></nav><div id="post-info"><h1 class="post-title">linux kernel之内存管理</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2026-03-31T08:19:54.000Z" title="Created 2026-03-31 16:19:54">2026-03-31</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-03-31T08:53:31.955Z" title="Updated 2026-03-31 16:53:31">2026-03-31</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/Linux%E5%BC%80%E5%8F%91/">Linux开发</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#%E7%9B%AE%E5%BD%95">目录</a></li>
+<li><a href="#%E4%B8%80%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98-vs-%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98">一、物理内存 vs 虚拟内存</a></li>
+<li><a href="#%E4%BA%8C%E9%A1%B5%E8%A1%A8page-table">二、页表（Page Table）</a><ul>
+<li><a href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E9%9C%80%E8%A6%81%E9%A1%B5%E8%A1%A8">为什么需要页表？</a></li>
+<li><a href="#%E5%85%B3%E9%94%AE%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84">关键数据结构</a></li>
+</ul>
+</li>
+<li><a href="#%E4%B8%89malloc-%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0">三、malloc 底层实现</a><ul>
+<li><a href="#%E7%94%A8%E6%88%B7%E6%80%81-malloc-%E8%B0%83%E7%94%A8%E9%93%BE">用户态 malloc 调用链</a></li>
+<li><a href="#%E5%86%85%E6%A0%B8%E6%80%81%E5%AE%9E%E7%8E%B0">内核态实现</a></li>
+<li><a href="#malloc-%E5%88%86%E9%85%8D%E7%AD%96%E7%95%A5">malloc 分配策略</a></li>
+<li><a href="#%E8%A7%A6%E5%8F%91%E6%9D%A1%E4%BB%B6">触发条件</a></li>
+<li><a href="#oom-killer-%E9%80%89%E6%8B%A9%E7%AE%97%E6%B3%95oom_badness">OOM Killer 选择算法（oom_badness）</a></li>
+<li><a href="#%E9%80%89%E6%8B%A9%E4%BC%98%E5%85%88%E7%BA%A7%E7%AE%80%E5%8C%96">选择优先级（简化）</a></li>
+<li><a href="#oom-%E6%97%A5%E5%BF%97%E5%88%86%E6%9E%90">OOM 日志分析</a></li>
+<li><a href="#%E6%89%8B%E5%8A%A8%E8%A7%A6%E5%8F%91-oom%E6%B5%8B%E8%AF%95%E7%94%A8">手动触发 OOM（测试用）</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="一、物理内存-vs-虚拟内存"><a href="#一、物理内存-vs-虚拟内存" class="headerlink" title="一、物理内存 vs 虚拟内存"></a>一、物理内存 vs 虚拟内存</h2><p>核心概念对比</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>物理内存</th>
+<th>虚拟内存</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>本质</strong></td>
+<td>真实的 RAM 硬件</td>
+<td>进程看到的抽象地址空间</td>
+</tr>
+<tr>
+<td><strong>地址范围</strong></td>
+<td>0 ~ 物理内存大小</td>
+<td>0 ~ 2^64（64位系统）</td>
+</tr>
+<tr>
+<td><strong>隔离性</strong></td>
+<td>全局共享，无隔离</td>
+<td>每个进程独立，互相隔离</td>
+</tr>
+<tr>
+<td><strong>连续性</strong></td>
+<td>必须连续分配</td>
+<td>可以非连续（通过页表映射）</td>
+</tr>
+<tr>
+<td><strong>大小限制</strong></td>
+<td>受硬件限制</td>
+<td>可远大于物理内存（交换）</td>
+</tr>
+</tbody></table>
+<p>示意图</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br></pre></td><td class="code"><pre><span class="line">进程A的虚拟地址空间              物理内存 (RAM)</span><br><span class="line">┌─────────────────┐              ┌─────────────┐</span><br><span class="line">│   0-3G 用户空间  │              │             │</span><br><span class="line">│   代码/数据/堆/栈 │              │  内核页表    │</span><br><span class="line">│                 │              │  直接映射区   │</span><br><span class="line">├─────────────────┤              ├─────────────┤</span><br><span class="line">│   3-4G 内核空间  │◄────────────►│  物理页框     │</span><br><span class="line">│   （所有进程共享） │   页表映射    │ (Page Frame)│</span><br><span class="line">└─────────────────┘              └─────────────┘</span><br><span class="line">        │                              ▲</span><br><span class="line">        │         页表 (Page Table)     │</span><br><span class="line">        └──────────────────────────────┘</span><br></pre></td></tr></table></figure>
+
+<h2 id="二、页表（Page-Table）"><a href="#二、页表（Page-Table）" class="headerlink" title="二、页表（Page Table）"></a>二、页表（Page Table）</h2><h3 id="为什么需要页表？"><a href="#为什么需要页表？" class="headerlink" title="为什么需要页表？"></a>为什么需要页表？</h3><p>实现虚拟地址 → 物理地址的转换，同时提供权限控制（读&#x2F;写&#x2F;执行）。<br>多级页表（以 64位 ARM64 为例）</p>
+<figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line">虚拟地址 (64位)</span><br><span class="line">┌────────┬────────┬────────┬────────┬──────────────┐</span><br><span class="line">│  PGD   │  PUD   │  PMD   │  PTE   │  Offset      │</span><br><span class="line">│  9位   │  9位   │  9位   │  9位   │  12位 (4KB)    │</span><br><span class="line">│  页全局 │  页上级 │  页中级 │  页表  │   页内偏移     │</span><br><span class="line">└────┬───┴────┬───┴────┬───┴────┬───┴──────┬───────┘</span><br><span class="line">     │        │        │        │          │</span><br><span class="line">     ▼        ▼        ▼        ▼          ▼</span><br><span class="line">   PGD表    PUD表    PMD表    PTE表     物理页框</span><br><span class="line">  (512项)  (512项)  (512项)  (512项)   (4KB/页)</span><br></pre></td></tr></table></figure>
+<p>地址转换流程:</p>
+<p>CPU 发出虚拟地址 0x0000_1234_5678_9ABC</p>
+<ol>
+<li><p>取 PGD 索引 (位[47:39]) &#x3D; 0x02<br>PGD[2] → PUD 基地址</p>
+</li>
+<li><p>取 PUD 索引 (位[38:30]) &#x3D; 0x11<br>PUD[0x11] → PMD 基地址</p>
+</li>
+<li><p>取 PMD 索引 (位[29:21]) &#x3D; 0x0A<br>PMD[0x0A] → PTE 基地址</p>
+</li>
+<li><p>取 PTE 索引 (位[20:12]) &#x3D; 0x345<br>PTE[0x345] → 物理页框基地址 0x8000_0000_0000</p>
+</li>
+<li><p>取 Offset (位[11:0]) &#x3D; 0x9ABC<br>物理地址 &#x3D; 0x8000_0000_0000 + 0x9ABC &#x3D; 0x8000_0000_9ABC</p>
+</li>
+</ol>
+<h3 id="关键数据结构"><a href="#关键数据结构" class="headerlink" title="关键数据结构"></a>关键数据结构</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">// include/linux/mm_types.h</span><br><span class="line"></span><br><span class="line">// 页表项（PTE）</span><br><span class="line">typedef struct &#123; pteval_t pte; &#125; pte_t;</span><br><span class="line"></span><br><span class="line">// 页描述符（每个物理页一个）</span><br><span class="line">struct page &#123;</span><br><span class="line">    unsigned long flags;        // 页状态标志</span><br><span class="line">    atomic_t _refcount;         // 引用计数</span><br><span class="line">    struct list_head lru;       // LRU链表（页面回收）</span><br><span class="line">    void *virtual;              // 虚拟地址映射（高端内存用）</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">// 内存描述符（每个进程一个）</span><br><span class="line">struct mm_struct &#123;</span><br><span class="line">    pgd_t *pgd;                 // 页全局目录指针</span><br><span class="line">    atomic_t mm_users;          // 用户空间引用计数</span><br><span class="line">    atomic_t mm_count;          // 内核引用计数</span><br><span class="line">    unsigned long start_code, end_code;   // 代码段</span><br><span class="line">    unsigned long start_data, end_data;   // 数据段</span><br><span class="line">    unsigned long start_brk, brk;         // 堆</span><br><span class="line">    unsigned long start_stack;            // 栈</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<h2 id="三、malloc-底层实现"><a href="#三、malloc-底层实现" class="headerlink" title="三、malloc 底层实现"></a>三、malloc 底层实现</h2><h3 id="用户态-malloc-调用链"><a href="#用户态-malloc-调用链" class="headerlink" title="用户态 malloc 调用链"></a>用户态 malloc 调用链</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br></pre></td><td class="code"><pre><span class="line">用户程序</span><br><span class="line">    │</span><br><span class="line">    ▼ malloc(100)</span><br><span class="line">┌─────────────┐</span><br><span class="line">│   glibc     │</span><br><span class="line">│  ptmalloc   │  ← 内存分配器（ptmalloc/tcmalloc/jemalloc）</span><br><span class="line">│             │     - 小内存：从堆分配（brk/mmap）</span><br><span class="line">│             │     - 大内存：直接 mmap</span><br><span class="line">└──────┬──────┘</span><br><span class="line">       │</span><br><span class="line">       ├──► brk()  ──► 系统调用 ──► sys_brk()</span><br><span class="line">       │              调整堆顶指针</span><br><span class="line">       │</span><br><span class="line">       └──► mmap() ──► 系统调用 ──► sys_mmap()</span><br><span class="line">                      匿名映射/文件映射</span><br></pre></td></tr></table></figure>
+<h3 id="内核态实现"><a href="#内核态实现" class="headerlink" title="内核态实现"></a>内核态实现</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br><span class="line">26</span><br><span class="line">27</span><br><span class="line">28</span><br><span class="line">29</span><br><span class="line">30</span><br><span class="line">31</span><br><span class="line">32</span><br><span class="line">33</span><br><span class="line">34</span><br><span class="line">35</span><br><span class="line">36</span><br><span class="line">37</span><br><span class="line">38</span><br><span class="line">39</span><br><span class="line">40</span><br><span class="line">41</span><br><span class="line">42</span><br><span class="line">43</span><br><span class="line">44</span><br><span class="line">45</span><br></pre></td><td class="code"><pre><span class="line">// mm/mmap.c - sys_brk 实现</span><br><span class="line">SYSCALL_DEFINE1(brk, unsigned long, brk)</span><br><span class="line">&#123;</span><br><span class="line">    unsigned long retval;</span><br><span class="line">    unsigned long newbrk, oldbrk;</span><br><span class="line">    struct mm_struct *mm = current-&gt;mm;</span><br><span class="line">    </span><br><span class="line">    // 检查新 brk 是否合法</span><br><span class="line">    newbrk = PAGE_ALIGN(brk);</span><br><span class="line">    oldbrk = PAGE_ALIGN(mm-&gt;brk);</span><br><span class="line">    </span><br><span class="line">    if (oldbrk == newbrk)</span><br><span class="line">        goto set_brk;</span><br><span class="line">    </span><br><span class="line">    // 扩展或收缩堆</span><br><span class="line">    if (brk &lt;= oldbrk) &#123;</span><br><span class="line">        // 收缩，释放页面</span><br><span class="line">        do_munmap(mm, newbrk, oldbrk-newbrk, NULL);</span><br><span class="line">    &#125; else &#123;</span><br><span class="line">        // 扩展，分配新页面</span><br><span class="line">        do_brk_flags(oldbrk, newbrk-oldbrk, 0, NULL);</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">set_brk:</span><br><span class="line">    mm-&gt;brk = brk;          // 更新堆顶指针</span><br><span class="line">    return brk;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// 实际页面分配在缺页异常中处理</span><br><span class="line">// mm/memory.c - do_anonymous_page()</span><br><span class="line">static vm_fault_t do_anonymous_page(struct vm_fault *vmf)</span><br><span class="line">&#123;</span><br><span class="line">    struct page *page;</span><br><span class="line">    </span><br><span class="line">    // 分配物理页框</span><br><span class="line">    page = alloc_zeroed_user_highpage_movable(vma, vmf-&gt;address);</span><br><span class="line">    if (!page)</span><br><span class="line">        return VM_FAULT_OOM;</span><br><span class="line">    </span><br><span class="line">    // 建立页表映射</span><br><span class="line">    entry = mk_pte(page, vma-&gt;vm_page_prot);</span><br><span class="line">    set_pte_at(vma-&gt;vm_mm, vmf-&gt;address, vmf-&gt;pte, entry);</span><br><span class="line">    </span><br><span class="line">    return 0;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="malloc-分配策略"><a href="#malloc-分配策略" class="headerlink" title="malloc 分配策略"></a>malloc 分配策略</h3><table>
+<thead>
+<tr>
+<th>分配大小</th>
+<th>实现方式</th>
+<th>系统调用</th>
+<th>释放方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&lt; 128KB</td>
+<td>堆分配</td>
+<td>brk()</td>
+<td>不立即归还，缓存复用</td>
+</tr>
+<tr>
+<td>&gt;&#x3D; 128KB</td>
+<td>匿名映射</td>
+<td>mmap()</td>
+<td>munmap() 立即归还</td>
+</tr>
+<tr>
+<td>超大内存</td>
+<td>文件映射</td>
+<td>mmap(文件)</td>
+<td>munmap()</td>
+</tr>
+</tbody></table>
+<h3 id="触发条件"><a href="#触发条件" class="headerlink" title="触发条件"></a>触发条件</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line">┌─────────────────────────────────────────────┐</span><br><span class="line">│  物理内存不足  +  交换空间用尽  +  无法回收页面   │</span><br><span class="line">│         ↓                                   │</span><br><span class="line">│  触发 OOM Killer，选择并杀死进程               │</span><br><span class="line">└─────────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
+<h3 id="OOM-Killer-选择算法（oom-badness）"><a href="#OOM-Killer-选择算法（oom-badness）" class="headerlink" title="OOM Killer 选择算法（oom_badness）"></a>OOM Killer 选择算法（oom_badness）</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br><span class="line">20</span><br><span class="line">21</span><br><span class="line">22</span><br><span class="line">23</span><br><span class="line">24</span><br><span class="line">25</span><br></pre></td><td class="code"><pre><span class="line">// mm/oom_kill.c</span><br><span class="line"></span><br><span class="line">unsigned long oom_badness(struct task_struct *p, struct mem_cgroup *memcg,</span><br><span class="line">                          const nodemask_t *nodemask, unsigned long totalpages)</span><br><span class="line">&#123;</span><br><span class="line">    long points;</span><br><span class="line">    </span><br><span class="line">    // 基础分数 = 常驻内存 RSS</span><br><span class="line">    points = get_mm_rss(p-&gt;mm);</span><br><span class="line">    </span><br><span class="line">    // 加上页表、swap 占用</span><br><span class="line">    points += get_mm_counter(p-&gt;mm, MM_SWAPENTS);</span><br><span class="line">    points += p-&gt;mm-&gt;nr_ptes;</span><br><span class="line">    </span><br><span class="line">    // 根据 oom_score_adj 调整</span><br><span class="line">    // root 进程通常有 -1000（不被杀死）</span><br><span class="line">    // 普通进程 0 ~ 1000</span><br><span class="line">    adj = p-&gt;signal-&gt;oom_score_adj;</span><br><span class="line">    if (adj == OOM_SCORE_ADJ_MIN)  // -1000</span><br><span class="line">        return 0;  // 永不杀死</span><br><span class="line">    </span><br><span class="line">    points += adj;</span><br><span class="line">    </span><br><span class="line">    return points &gt; 0 ? points : 1;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="选择优先级（简化）"><a href="#选择优先级（简化）" class="headerlink" title="选择优先级（简化）"></a>选择优先级（简化）</h3><table>
+<thead>
+<tr>
+<th>进程类型</th>
+<th>oom_score_adj</th>
+<th>被杀概率</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>root 进程</td>
+<td>-1000</td>
+<td>永不</td>
+</tr>
+<tr>
+<td>系统关键服务（sshd）</td>
+<td>-1000</td>
+<td>永不</td>
+</tr>
+<tr>
+<td>普通用户进程</td>
+<td>0</td>
+<td>中等</td>
+</tr>
+<tr>
+<td>后台批处理任务</td>
+<td>100 ~ 1000</td>
+<td>高</td>
+</tr>
+<tr>
+<td>内存泄漏进程</td>
+<td>RSS 极大</td>
+<td>最高</td>
+</tr>
+</tbody></table>
+<h3 id="OOM-日志分析"><a href="#OOM-日志分析" class="headerlink" title="OOM 日志分析"></a>OOM 日志分析</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"># 查看 OOM 日志</span><br><span class="line">dmesg | grep -i &quot;out of memory&quot;</span><br><span class="line"></span><br><span class="line"># 典型输出：</span><br><span class="line">[  123.456] Out of memory: Kill process 1234 (python) score 912 or sacrifice child</span><br><span class="line">[  123.457] Killed process 1234 (python) total-vm:1048576kB, anon-rss:524288kB</span><br><span class="line"></span><br><span class="line"># 查看进程 OOM 分数</span><br><span class="line">cat /proc/&lt;pid&gt;/oom_score</span><br><span class="line">cat /proc/&lt;pid&gt;/oom_score_adj  # 可调整，-1000 到 1000</span><br></pre></td></tr></table></figure>
+
+<h3 id="手动触发-OOM（测试用）"><a href="#手动触发-OOM（测试用）" class="headerlink" title="手动触发 OOM（测试用）"></a>手动触发 OOM（测试用）</h3><figure class="highlight plaintext"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br></pre></td><td class="code"><pre><span class="line"># 方法1：分配超过物理内存</span><br><span class="line">stress --vm 1 --vm-bytes 100G --vm-keep</span><br><span class="line"></span><br><span class="line"># 方法2：通过 proc 接口</span><br><span class="line">echo f &gt; /proc/sysrq-trigger  # 手动触发 OOM</span><br></pre></td></tr></table></figure>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>Author: </span><span class="post-copyright-info"><a href="https://qdym188.github.io">Cosmo Qiu</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>Link: </span><span class="post-copyright-info"><a href="https://qdym188.github.io/2026/03/31/linux-kernel-memory-management/">https://qdym188.github.io/2026/03/31/linux-kernel-memory-management/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>Copyright Notice: </span><span class="post-copyright-info">All articles on this blog are licensed under <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> unless otherwise stated.</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/Linux-kernel/">Linux kernel</a><a class="post-meta__tags" href="/tags/%E5%86%85%E5%AD%98%E7%AE%A1%E7%90%86/">内存管理</a><a class="post-meta__tags" href="/tags/%E5%A4%A7%E6%A8%A1%E5%9E%8B/">大模型</a><a class="post-meta__tags" href="/tags/%E5%9F%BA%E7%A1%80%E7%9F%A5%E8%AF%86/">基础知识</a></div><div class="post-share"><div class="social-share" data-image="/img/butterfly-icon.png" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related full-width" href="/2026/03/26/linux-kernel-c/" title="Linux Kernel之Kernel C"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">Next</div><div class="info-item-2">Linux Kernel之Kernel C</div></div><div class="info-2"><div class="info-item-1"> Linux Kernel 主要用 C 语言编写，同时包含少量汇编和辅助语言，本文总结Kernel中的主要知识点    目录 目录 语言构成 为什么用 C 语言？ Kernel C 与普通 C 的区别 没有标准库 没有浮点运算 内存管理受限 并发编程复杂 内联汇编   指针和内存管理 Kernel指针的特殊性 1.多种地址空间 2.指针类型标记（Sparse 检查）     Kernel 内存管理核心机制 内存分区（Zone） 页分配（Page 级） Slab 分配器（对象级） 虚拟内存管理（vmalloc vs kmalloc）   内存泄漏与调试 引用计数（Kref） 内存调试工具   进程状态转换 进程状态定义 简化状态图： 状态转换完整流程图    语言构成123456| 语言                    | 占比        | 用途                     || ---------------------  | ---------   | ---------------------- || **C 语言**              | ~...</div></div></div></a></nav><div class="relatedPosts"><div class="headline"><i class="fas fa-thumbs-up fa-fw"></i><span>Related Articles</span></div><div class="relatedPosts-list"><a class="pagination-related" href="/2026/03/26/linux-kernel-c/" title="Linux Kernel之Kernel C"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-03-26</div><div class="info-item-2">Linux Kernel之Kernel C</div></div><div class="info-2"><div class="info-item-1"> Linux Kernel 主要用 C 语言编写，同时包含少量汇编和辅助语言，本文总结Kernel中的主要知识点    目录 目录 语言构成 为什么用 C 语言？ Kernel C 与普通 C 的区别 没有标准库 没有浮点运算 内存管理受限 并发编程复杂 内联汇编   指针和内存管理 Kernel指针的特殊性 1.多种地址空间 2.指针类型标记（Sparse 检查）     Kernel 内存管理核心机制 内存分区（Zone） 页分配（Page 级） Slab 分配器（对象级） 虚拟内存管理（vmalloc vs kmalloc）   内存泄漏与调试 引用计数（Kref） 内存调试工具   进程状态转换 进程状态定义 简化状态图： 状态转换完整流程图    语言构成123456| 语言                    | 占比        | 用途                     || ---------------------  | ---------   | ---------------------- || **C 语言**              | ~...</div></div></div></a><a class="pagination-related" href="/2026/03/26/linux-kernel-process/" title="Linux Kernel之进程管理"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-center"><div class="info-1"><div class="info-item-1"><i class="far fa-calendar-alt fa-fw"></i> 2026-03-26</div><div class="info-item-2">Linux Kernel之进程管理</div></div><div class="info-2"><div class="info-item-1"> Linux Kernel 的进程管理是其最核心的子系统之一。本文主要梳理fork&#x2F;exec、调度器(CFS)、进程状态转换的概念和使用方法    目录 目录 进程管理在 Kernel 中的位置 Fork：进程的”自我复制” Exec：进程的”灵魂替换” CFS是什么 CFS数据结构 1. 调度实体（sched_entity） 2. CFS 运行队列（cfs_rq）   CFS核心机制：红黑树 + vruntime vruntime 计算详解 CFS 与实时调度器对比 CFS 的局限与演进    进程管理在 Kernel 中的位置1234567891011121314151617181920212223┌─────────────────────────────────────────┐│              用户空间                    ││    (Shell、应用程序、系统调用接口)          │└─────────────────────────────────────────┘                    │     ...</div></div></div></a></div></div></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/butterfly-icon.png" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">Cosmo Qiu</div><div class="author-info-description">欢迎来到芯片码工的碎碎念，这里是一个分享技术与生活的个人博客。无论是技术随想还是日常生活的点滴，我都会在这里与你分享我的见解和经验。希望我的博客能为你带来启发和帮助！</div><div class="site-data"><a href="/archives/"><div class="headline">Articles</div><div class="length-num">4</div></a><a href="/tags/"><div class="headline">Tags</div><div class="length-num">11</div></a><a href="/categories/"><div class="headline">Categories</div><div class="length-num">2</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/xxxxxx"><i class="fab fa-github"></i><span>Follow Me</span></a></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>Announcement</span></div><div class="announcement_content">This is my Blog</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>Contents</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E7%9B%AE%E5%BD%95"><span class="toc-number">1.</span> <span class="toc-text">目录</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%80%E3%80%81%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98-vs-%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98"><span class="toc-number">2.</span> <span class="toc-text">一、物理内存 vs 虚拟内存</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%BA%8C%E3%80%81%E9%A1%B5%E8%A1%A8%EF%BC%88Page-Table%EF%BC%89"><span class="toc-number">3.</span> <span class="toc-text">二、页表（Page Table）</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E9%9C%80%E8%A6%81%E9%A1%B5%E8%A1%A8%EF%BC%9F"><span class="toc-number">3.1.</span> <span class="toc-text">为什么需要页表？</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%85%B3%E9%94%AE%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84"><span class="toc-number">3.2.</span> <span class="toc-text">关键数据结构</span></a></li></ol></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E3%80%81malloc-%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0"><span class="toc-number">4.</span> <span class="toc-text">三、malloc 底层实现</span></a><ol class="toc-child"><li class="toc-item toc-level-3"><a class="toc-link" href="#%E7%94%A8%E6%88%B7%E6%80%81-malloc-%E8%B0%83%E7%94%A8%E9%93%BE"><span class="toc-number">4.1.</span> <span class="toc-text">用户态 malloc 调用链</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E5%86%85%E6%A0%B8%E6%80%81%E5%AE%9E%E7%8E%B0"><span class="toc-number">4.2.</span> <span class="toc-text">内核态实现</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#malloc-%E5%88%86%E9%85%8D%E7%AD%96%E7%95%A5"><span class="toc-number">4.3.</span> <span class="toc-text">malloc 分配策略</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E8%A7%A6%E5%8F%91%E6%9D%A1%E4%BB%B6"><span class="toc-number">4.4.</span> <span class="toc-text">触发条件</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#OOM-Killer-%E9%80%89%E6%8B%A9%E7%AE%97%E6%B3%95%EF%BC%88oom-badness%EF%BC%89"><span class="toc-number">4.5.</span> <span class="toc-text">OOM Killer 选择算法（oom_badness）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E9%80%89%E6%8B%A9%E4%BC%98%E5%85%88%E7%BA%A7%EF%BC%88%E7%AE%80%E5%8C%96%EF%BC%89"><span class="toc-number">4.6.</span> <span class="toc-text">选择优先级（简化）</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#OOM-%E6%97%A5%E5%BF%97%E5%88%86%E6%9E%90"><span class="toc-number">4.7.</span> <span class="toc-text">OOM 日志分析</span></a></li><li class="toc-item toc-level-3"><a class="toc-link" href="#%E6%89%8B%E5%8A%A8%E8%A7%A6%E5%8F%91-OOM%EF%BC%88%E6%B5%8B%E8%AF%95%E7%94%A8%EF%BC%89"><span class="toc-number">4.8.</span> <span class="toc-text">手动触发 OOM（测试用）</span></a></li></ol></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>Recent Posts</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/31/linux-kernel-memory-management/" title="linux kernel之内存管理">linux kernel之内存管理</a><time datetime="2026-03-31T08:19:54.000Z" title="Created 2026-03-31 16:19:54">2026-03-31</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/26/linux-kernel-c/" title="Linux Kernel之Kernel C">Linux Kernel之Kernel C</a><time datetime="2026-03-26T09:18:00.000Z" title="Created 2026-03-26 17:18:00">2026-03-26</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/26/linux-kernel-process/" title="Linux Kernel之进程管理">Linux Kernel之进程管理</a><time datetime="2026-03-26T05:48:00.000Z" title="Created 2026-03-26 13:48:00">2026-03-26</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/18/hexo-github-pages-guide/" title="Hexo + GitHub Pages 完整指南：从安装到美化">Hexo + GitHub Pages 完整指南：从安装到美化</a><time datetime="2026-03-18T11:18:00.000Z" title="Created 2026-03-18 19:18:00">2026-03-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2025 - 2026 By Cosmo Qiu</span><span class="framework-info"><span>Framework </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 8.1.1</a><span class="footer-separator">|</span><span>Theme </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="Reading Mode"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="Toggle Between Light and Dark Mode"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="Toggle Between Single-column and Double-column"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="Settings"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="Table of Contents"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="Back to Top"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>

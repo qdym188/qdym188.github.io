@@ -1,81 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <search>
   <entry>
-    <title>Linux Kernel之进程管理</title>
-    <url>/2026/03/26/linux-kernel-process/</url>
-    <content><![CDATA[<blockquote>
-<p>Linux Kernel 的进程管理是其最核心的子系统之一。本文主要梳理fork&#x2F;exec、调度器(CFS)、进程状态转换的概念和使用方法</p>
-</blockquote>
-<span id="more"></span>
-
-<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><h2 id="进程管理在-Kernel-中的位置"><a href="#进程管理在-Kernel-中的位置" class="headerlink" title="进程管理在 Kernel 中的位置"></a>进程管理在 Kernel 中的位置</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│              用户空间                    │</span><br><span class="line">│    (Shell、应用程序、系统调用接口)          │</span><br><span class="line">└─────────────────────────────────────────┘</span><br><span class="line">                    │</span><br><span class="line">                    ▼ 系统调用 (int 0x80 / syscall)</span><br><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│           内核空间 - 进程管理子系统         │</span><br><span class="line">│                                         │</span><br><span class="line">│  ┌─────────────┐    ┌─────────────┐     │</span><br><span class="line">│  │  进程调度    │◄──►│  进程控制     │     │</span><br><span class="line">│  │  (Scheduler)│    │  (Fork/Exec)│     │</span><br><span class="line">│  │   CFS/RT    │    │             │     │</span><br><span class="line">│  └─────────────┘    └──────┬──────┘     │</span><br><span class="line">│                            │            │</span><br><span class="line">│  ┌─────────────┐    ┌──────┴──────┐     │ </span><br><span class="line">│  │  进程间通信  │    │  进程生命周期 │      │</span><br><span class="line">│  │ (IPC/信号)  │    │ (创建/终止)  │      │</span><br><span class="line">│  └─────────────┘    └─────────────┘     │</span><br><span class="line">│                                         │</span><br><span class="line">│  核心数据结构：task_struct、mm_struct、    │</span><br><span class="line">│             files_struct、signal_struct │</span><br><span class="line">└─────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
-
-<h2 id="Fork：进程的”自我复制”"><a href="#Fork：进程的”自我复制”" class="headerlink" title="Fork：进程的”自我复制”"></a>Fork：进程的”自我复制”</h2><p>一句话定义： fork() &#x3D; 细胞分裂。一个进程变成两个几乎完全相同的进程，父子共享代码，独立运行。</p>
-<h2 id="Exec"><a href="#Exec" class="headerlink" title="Exec:"></a>Exec:</h2><h2 id="CFS是什么"><a href="#CFS是什么" class="headerlink" title="CFS是什么"></a>CFS是什么</h2><p>CFS（Completely Fair Scheduler，完全公平调度器） &#x3D; Linux 的默认进程调度器，自 2.6.23（2007年）取代 O(1) 调度器，追求公平性而非绝对效率。</p>
-<p>核心思想：</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">让每个进程获得 &quot;公平的 CPU 时间份额&quot;</span><br><span class="line">    ↓</span><br><span class="line">用虚拟时间 vruntime 衡量&quot;应得&quot; vs &quot;实际获得&quot;</span><br><span class="line">    ↓</span><br><span class="line">总是选择 vruntime 最小的进程运行（最&quot;亏&quot;的优先补偿）</span><br></pre></td></tr></table></figure>
-
-<h2 id="CFS数据结构"><a href="#CFS数据结构" class="headerlink" title="CFS数据结构"></a>CFS数据结构</h2><h3 id="1-调度实体（sched-entity）"><a href="#1-调度实体（sched-entity）" class="headerlink" title="1. 调度实体（sched_entity）"></a>1. 调度实体（sched_entity）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// include/linux/sched.h</span><br><span class="line">struct sched_entity &#123;</span><br><span class="line">    struct load_weight  load;        // 权重（nice 值转换）</span><br><span class="line">    struct rb_node      run_node;    // 红黑树节点</span><br><span class="line">    u64                 vruntime;    // ⭐ 虚拟运行时间（关键）</span><br><span class="line">    u64                 exec_start;  // 开始执行时间</span><br><span class="line">    u64                 sum_exec_runtime;  // 总运行时间</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
-<h3 id="2-CFS-运行队列（cfs-rq）"><a href="#2-CFS-运行队列（cfs-rq）" class="headerlink" title="2. CFS 运行队列（cfs_rq）"></a>2. CFS 运行队列（cfs_rq）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// kernel/sched/sched.h</span><br><span class="line">struct cfs_rq &#123;</span><br><span class="line">    struct rb_root_cached  tasks_timeline;  // ⭐ 红黑树根</span><br><span class="line">    struct sched_entity    *curr;           // 当前运行进程</span><br><span class="line">    u64                    min_vruntime;      // 队列最小 vruntime</span><br><span class="line">    unsigned long          load_weight;     // 队列总权重</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
-<h2 id="CFS核心机制：红黑树-vruntime"><a href="#CFS核心机制：红黑树-vruntime" class="headerlink" title="CFS核心机制：红黑树 + vruntime"></a>CFS核心机制：红黑树 + vruntime</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│           CFS 红黑树结构                 │</span><br><span class="line">│                                         │</span><br><span class="line">│              [P3: v=30]                 │</span><br><span class="line">│             /          \                │</span><br><span class="line">│      [P1: v=10]      [P5: v=50]         │</span><br><span class="line">│        /    \          /                │</span><br><span class="line">│  [P0: v=5] [P2: v=20] [P4: v=40]        │</span><br><span class="line">│                                         │</span><br><span class="line">│  最左侧节点 P0 (vruntime 最小) ← 下一个运行 │</span><br><span class="line">│                                         │</span><br><span class="line">│  插入位置：根据 vruntime 排序            │</span><br><span class="line">│  查询：O(log n) 取最左节点（实际优化为 O(1)）│</span><br><span class="line">└─────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
-<h3 id="vruntime-计算详解"><a href="#vruntime-计算详解" class="headerlink" title="vruntime 计算详解"></a>vruntime 计算详解</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 核心计算（kernel/sched/fair.c）</span><br><span class="line">vruntime += delta_exec * (NICE_0_LOAD / se-&gt;load.weight)</span><br><span class="line"></span><br><span class="line">// 其中：</span><br><span class="line">// delta_exec = 实际运行时间（纳秒）</span><br><span class="line">// NICE_0_LOAD = 1024（nice 0 的基准权重）</span><br><span class="line">// se-&gt;load.weight = 当前进程权重（由 nice 值决定）</span><br></pre></td></tr></table></figure>
-<ul>
-<li>nice 值小的进程（高优先级），vruntime 增长慢 → 更容易被选中</li>
-<li>nice 值大的进程（低优先级），vruntime 增长快 → 等待时间更长</li>
-</ul>
-<h3 id="CFS-与实时调度器对比"><a href="#CFS-与实时调度器对比" class="headerlink" title="CFS 与实时调度器对比"></a>CFS 与实时调度器对比</h3><table>
-<thead>
-<tr>
-<th>特性</th>
-<th>CFS（SCHED_NORMAL）</th>
-<th>实时调度器（SCHED_FIFO&#x2F;RR）</th>
-</tr>
-</thead>
-<tbody><tr>
-<td>目标</td>
-<td>公平分享 CPU</td>
-<td>绝对优先级</td>
-</tr>
-<tr>
-<td>算法</td>
-<td>红黑树 + vruntime</td>
-<td>优先级队列</td>
-</tr>
-<tr>
-<td>抢占</td>
-<td>自愿（时间片用完）</td>
-<td>强制（高优先级立即抢占）</td>
-</tr>
-<tr>
-<td>nice&#x2F;优先级</td>
-<td>nice -20~+19</td>
-<td>1~99（实时优先级）</td>
-</tr>
-<tr>
-<td>适用场景</td>
-<td>普通进程</td>
-<td>实时任务（音视频、控制）</td>
-</tr>
-</tbody></table>
-<h3 id="CFS-的局限与演进"><a href="#CFS-的局限与演进" class="headerlink" title="CFS 的局限与演进"></a>CFS 的局限与演进</h3><p>局限</p>
-<ol>
-<li>对延迟敏感任务不友好（vruntime 累积延迟）</li>
-<li>多核负载均衡开销大</li>
-<li>无法感知业务优先级（仅 nice 值）</li>
-</ol>
-<p>演进：Sched Ext（BPF 调度器）</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Linux 6.12+ 引入，允许 BPF 编写自定义调度策略</span><br><span class="line">SEC(&quot;sched_ext&quot;)</span><br><span class="line">int my_ai_scheduler(struct task_struct *p)</span><br><span class="line">&#123;</span><br><span class="line">    // 自定义逻辑：优先调度 AI 推理任务</span><br><span class="line">    if (is_ai_inference_task(p))</span><br><span class="line">        return SCX_WAKE_KICK;</span><br><span class="line">    </span><br><span class="line">    return SCX_WAKE_IDLE;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
-]]></content>
-      <categories>
-        <category>Linux开发</category>
-      </categories>
-      <tags>
-        <tag>Linux kernel</tag>
-        <tag>进程管理</tag>
-        <tag>基础概念</tag>
-      </tags>
-  </entry>
-  <entry>
     <title>Hexo + GitHub Pages 完整指南：从安装到美化</title>
     <url>/2026/03/18/hexo-github-pages-guide/</url>
     <content><![CDATA[<blockquote>
@@ -279,6 +204,165 @@
       </tags>
   </entry>
   <entry>
+    <title>linux kernel之内存管理</title>
+    <url>/2026/03/31/linux-kernel-memory-management/</url>
+    <content><![CDATA[<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#%E7%9B%AE%E5%BD%95">目录</a></li>
+<li><a href="#%E4%B8%80%E7%89%A9%E7%90%86%E5%86%85%E5%AD%98-vs-%E8%99%9A%E6%8B%9F%E5%86%85%E5%AD%98">一、物理内存 vs 虚拟内存</a></li>
+<li><a href="#%E4%BA%8C%E9%A1%B5%E8%A1%A8page-table">二、页表（Page Table）</a><ul>
+<li><a href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E9%9C%80%E8%A6%81%E9%A1%B5%E8%A1%A8">为什么需要页表？</a></li>
+<li><a href="#%E5%85%B3%E9%94%AE%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84">关键数据结构</a></li>
+</ul>
+</li>
+<li><a href="#%E4%B8%89malloc-%E5%BA%95%E5%B1%82%E5%AE%9E%E7%8E%B0">三、malloc 底层实现</a><ul>
+<li><a href="#%E7%94%A8%E6%88%B7%E6%80%81-malloc-%E8%B0%83%E7%94%A8%E9%93%BE">用户态 malloc 调用链</a></li>
+<li><a href="#%E5%86%85%E6%A0%B8%E6%80%81%E5%AE%9E%E7%8E%B0">内核态实现</a></li>
+<li><a href="#malloc-%E5%88%86%E9%85%8D%E7%AD%96%E7%95%A5">malloc 分配策略</a></li>
+<li><a href="#%E8%A7%A6%E5%8F%91%E6%9D%A1%E4%BB%B6">触发条件</a></li>
+<li><a href="#oom-killer-%E9%80%89%E6%8B%A9%E7%AE%97%E6%B3%95oom_badness">OOM Killer 选择算法（oom_badness）</a></li>
+<li><a href="#%E9%80%89%E6%8B%A9%E4%BC%98%E5%85%88%E7%BA%A7%E7%AE%80%E5%8C%96">选择优先级（简化）</a></li>
+<li><a href="#oom-%E6%97%A5%E5%BF%97%E5%88%86%E6%9E%90">OOM 日志分析</a></li>
+<li><a href="#%E6%89%8B%E5%8A%A8%E8%A7%A6%E5%8F%91-oom%E6%B5%8B%E8%AF%95%E7%94%A8">手动触发 OOM（测试用）</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="一、物理内存-vs-虚拟内存"><a href="#一、物理内存-vs-虚拟内存" class="headerlink" title="一、物理内存 vs 虚拟内存"></a>一、物理内存 vs 虚拟内存</h2><p>核心概念对比</p>
+<table>
+<thead>
+<tr>
+<th>特性</th>
+<th>物理内存</th>
+<th>虚拟内存</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>本质</strong></td>
+<td>真实的 RAM 硬件</td>
+<td>进程看到的抽象地址空间</td>
+</tr>
+<tr>
+<td><strong>地址范围</strong></td>
+<td>0 ~ 物理内存大小</td>
+<td>0 ~ 2^64（64位系统）</td>
+</tr>
+<tr>
+<td><strong>隔离性</strong></td>
+<td>全局共享，无隔离</td>
+<td>每个进程独立，互相隔离</td>
+</tr>
+<tr>
+<td><strong>连续性</strong></td>
+<td>必须连续分配</td>
+<td>可以非连续（通过页表映射）</td>
+</tr>
+<tr>
+<td><strong>大小限制</strong></td>
+<td>受硬件限制</td>
+<td>可远大于物理内存（交换）</td>
+</tr>
+</tbody></table>
+<p>示意图</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">进程A的虚拟地址空间              物理内存 (RAM)</span><br><span class="line">┌─────────────────┐              ┌─────────────┐</span><br><span class="line">│   0-3G 用户空间  │              │             │</span><br><span class="line">│   代码/数据/堆/栈 │              │  内核页表    │</span><br><span class="line">│                 │              │  直接映射区   │</span><br><span class="line">├─────────────────┤              ├─────────────┤</span><br><span class="line">│   3-4G 内核空间  │◄────────────►│  物理页框     │</span><br><span class="line">│   （所有进程共享） │   页表映射    │ (Page Frame)│</span><br><span class="line">└─────────────────┘              └─────────────┘</span><br><span class="line">        │                              ▲</span><br><span class="line">        │         页表 (Page Table)     │</span><br><span class="line">        └──────────────────────────────┘</span><br></pre></td></tr></table></figure>
+
+<h2 id="二、页表（Page-Table）"><a href="#二、页表（Page-Table）" class="headerlink" title="二、页表（Page Table）"></a>二、页表（Page Table）</h2><h3 id="为什么需要页表？"><a href="#为什么需要页表？" class="headerlink" title="为什么需要页表？"></a>为什么需要页表？</h3><p>实现虚拟地址 → 物理地址的转换，同时提供权限控制（读&#x2F;写&#x2F;执行）。<br>多级页表（以 64位 ARM64 为例）</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">虚拟地址 (64位)</span><br><span class="line">┌────────┬────────┬────────┬────────┬──────────────┐</span><br><span class="line">│  PGD   │  PUD   │  PMD   │  PTE   │  Offset      │</span><br><span class="line">│  9位   │  9位   │  9位   │  9位   │  12位 (4KB)    │</span><br><span class="line">│  页全局 │  页上级 │  页中级 │  页表  │   页内偏移     │</span><br><span class="line">└────┬───┴────┬───┴────┬───┴────┬───┴──────┬───────┘</span><br><span class="line">     │        │        │        │          │</span><br><span class="line">     ▼        ▼        ▼        ▼          ▼</span><br><span class="line">   PGD表    PUD表    PMD表    PTE表     物理页框</span><br><span class="line">  (512项)  (512项)  (512项)  (512项)   (4KB/页)</span><br></pre></td></tr></table></figure>
+<p>地址转换流程:</p>
+<p>CPU 发出虚拟地址 0x0000_1234_5678_9ABC</p>
+<ol>
+<li><p>取 PGD 索引 (位[47:39]) &#x3D; 0x02<br>PGD[2] → PUD 基地址</p>
+</li>
+<li><p>取 PUD 索引 (位[38:30]) &#x3D; 0x11<br>PUD[0x11] → PMD 基地址</p>
+</li>
+<li><p>取 PMD 索引 (位[29:21]) &#x3D; 0x0A<br>PMD[0x0A] → PTE 基地址</p>
+</li>
+<li><p>取 PTE 索引 (位[20:12]) &#x3D; 0x345<br>PTE[0x345] → 物理页框基地址 0x8000_0000_0000</p>
+</li>
+<li><p>取 Offset (位[11:0]) &#x3D; 0x9ABC<br>物理地址 &#x3D; 0x8000_0000_0000 + 0x9ABC &#x3D; 0x8000_0000_9ABC</p>
+</li>
+</ol>
+<h3 id="关键数据结构"><a href="#关键数据结构" class="headerlink" title="关键数据结构"></a>关键数据结构</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// include/linux/mm_types.h</span><br><span class="line"></span><br><span class="line">// 页表项（PTE）</span><br><span class="line">typedef struct &#123; pteval_t pte; &#125; pte_t;</span><br><span class="line"></span><br><span class="line">// 页描述符（每个物理页一个）</span><br><span class="line">struct page &#123;</span><br><span class="line">    unsigned long flags;        // 页状态标志</span><br><span class="line">    atomic_t _refcount;         // 引用计数</span><br><span class="line">    struct list_head lru;       // LRU链表（页面回收）</span><br><span class="line">    void *virtual;              // 虚拟地址映射（高端内存用）</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br><span class="line"></span><br><span class="line">// 内存描述符（每个进程一个）</span><br><span class="line">struct mm_struct &#123;</span><br><span class="line">    pgd_t *pgd;                 // 页全局目录指针</span><br><span class="line">    atomic_t mm_users;          // 用户空间引用计数</span><br><span class="line">    atomic_t mm_count;          // 内核引用计数</span><br><span class="line">    unsigned long start_code, end_code;   // 代码段</span><br><span class="line">    unsigned long start_data, end_data;   // 数据段</span><br><span class="line">    unsigned long start_brk, brk;         // 堆</span><br><span class="line">    unsigned long start_stack;            // 栈</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+
+<h2 id="三、malloc-底层实现"><a href="#三、malloc-底层实现" class="headerlink" title="三、malloc 底层实现"></a>三、malloc 底层实现</h2><h3 id="用户态-malloc-调用链"><a href="#用户态-malloc-调用链" class="headerlink" title="用户态 malloc 调用链"></a>用户态 malloc 调用链</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">用户程序</span><br><span class="line">    │</span><br><span class="line">    ▼ malloc(100)</span><br><span class="line">┌─────────────┐</span><br><span class="line">│   glibc     │</span><br><span class="line">│  ptmalloc   │  ← 内存分配器（ptmalloc/tcmalloc/jemalloc）</span><br><span class="line">│             │     - 小内存：从堆分配（brk/mmap）</span><br><span class="line">│             │     - 大内存：直接 mmap</span><br><span class="line">└──────┬──────┘</span><br><span class="line">       │</span><br><span class="line">       ├──► brk()  ──► 系统调用 ──► sys_brk()</span><br><span class="line">       │              调整堆顶指针</span><br><span class="line">       │</span><br><span class="line">       └──► mmap() ──► 系统调用 ──► sys_mmap()</span><br><span class="line">                      匿名映射/文件映射</span><br></pre></td></tr></table></figure>
+<h3 id="内核态实现"><a href="#内核态实现" class="headerlink" title="内核态实现"></a>内核态实现</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// mm/mmap.c - sys_brk 实现</span><br><span class="line">SYSCALL_DEFINE1(brk, unsigned long, brk)</span><br><span class="line">&#123;</span><br><span class="line">    unsigned long retval;</span><br><span class="line">    unsigned long newbrk, oldbrk;</span><br><span class="line">    struct mm_struct *mm = current-&gt;mm;</span><br><span class="line">    </span><br><span class="line">    // 检查新 brk 是否合法</span><br><span class="line">    newbrk = PAGE_ALIGN(brk);</span><br><span class="line">    oldbrk = PAGE_ALIGN(mm-&gt;brk);</span><br><span class="line">    </span><br><span class="line">    if (oldbrk == newbrk)</span><br><span class="line">        goto set_brk;</span><br><span class="line">    </span><br><span class="line">    // 扩展或收缩堆</span><br><span class="line">    if (brk &lt;= oldbrk) &#123;</span><br><span class="line">        // 收缩，释放页面</span><br><span class="line">        do_munmap(mm, newbrk, oldbrk-newbrk, NULL);</span><br><span class="line">    &#125; else &#123;</span><br><span class="line">        // 扩展，分配新页面</span><br><span class="line">        do_brk_flags(oldbrk, newbrk-oldbrk, 0, NULL);</span><br><span class="line">    &#125;</span><br><span class="line">    </span><br><span class="line">set_brk:</span><br><span class="line">    mm-&gt;brk = brk;          // 更新堆顶指针</span><br><span class="line">    return brk;</span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">// 实际页面分配在缺页异常中处理</span><br><span class="line">// mm/memory.c - do_anonymous_page()</span><br><span class="line">static vm_fault_t do_anonymous_page(struct vm_fault *vmf)</span><br><span class="line">&#123;</span><br><span class="line">    struct page *page;</span><br><span class="line">    </span><br><span class="line">    // 分配物理页框</span><br><span class="line">    page = alloc_zeroed_user_highpage_movable(vma, vmf-&gt;address);</span><br><span class="line">    if (!page)</span><br><span class="line">        return VM_FAULT_OOM;</span><br><span class="line">    </span><br><span class="line">    // 建立页表映射</span><br><span class="line">    entry = mk_pte(page, vma-&gt;vm_page_prot);</span><br><span class="line">    set_pte_at(vma-&gt;vm_mm, vmf-&gt;address, vmf-&gt;pte, entry);</span><br><span class="line">    </span><br><span class="line">    return 0;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="malloc-分配策略"><a href="#malloc-分配策略" class="headerlink" title="malloc 分配策略"></a>malloc 分配策略</h3><table>
+<thead>
+<tr>
+<th>分配大小</th>
+<th>实现方式</th>
+<th>系统调用</th>
+<th>释放方式</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>&lt; 128KB</td>
+<td>堆分配</td>
+<td>brk()</td>
+<td>不立即归还，缓存复用</td>
+</tr>
+<tr>
+<td>&gt;&#x3D; 128KB</td>
+<td>匿名映射</td>
+<td>mmap()</td>
+<td>munmap() 立即归还</td>
+</tr>
+<tr>
+<td>超大内存</td>
+<td>文件映射</td>
+<td>mmap(文件)</td>
+<td>munmap()</td>
+</tr>
+</tbody></table>
+<h3 id="触发条件"><a href="#触发条件" class="headerlink" title="触发条件"></a>触发条件</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────────┐</span><br><span class="line">│  物理内存不足  +  交换空间用尽  +  无法回收页面   │</span><br><span class="line">│         ↓                                   │</span><br><span class="line">│  触发 OOM Killer，选择并杀死进程               │</span><br><span class="line">└─────────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
+<h3 id="OOM-Killer-选择算法（oom-badness）"><a href="#OOM-Killer-选择算法（oom-badness）" class="headerlink" title="OOM Killer 选择算法（oom_badness）"></a>OOM Killer 选择算法（oom_badness）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// mm/oom_kill.c</span><br><span class="line"></span><br><span class="line">unsigned long oom_badness(struct task_struct *p, struct mem_cgroup *memcg,</span><br><span class="line">                          const nodemask_t *nodemask, unsigned long totalpages)</span><br><span class="line">&#123;</span><br><span class="line">    long points;</span><br><span class="line">    </span><br><span class="line">    // 基础分数 = 常驻内存 RSS</span><br><span class="line">    points = get_mm_rss(p-&gt;mm);</span><br><span class="line">    </span><br><span class="line">    // 加上页表、swap 占用</span><br><span class="line">    points += get_mm_counter(p-&gt;mm, MM_SWAPENTS);</span><br><span class="line">    points += p-&gt;mm-&gt;nr_ptes;</span><br><span class="line">    </span><br><span class="line">    // 根据 oom_score_adj 调整</span><br><span class="line">    // root 进程通常有 -1000（不被杀死）</span><br><span class="line">    // 普通进程 0 ~ 1000</span><br><span class="line">    adj = p-&gt;signal-&gt;oom_score_adj;</span><br><span class="line">    if (adj == OOM_SCORE_ADJ_MIN)  // -1000</span><br><span class="line">        return 0;  // 永不杀死</span><br><span class="line">    </span><br><span class="line">    points += adj;</span><br><span class="line">    </span><br><span class="line">    return points &gt; 0 ? points : 1;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+<h3 id="选择优先级（简化）"><a href="#选择优先级（简化）" class="headerlink" title="选择优先级（简化）"></a>选择优先级（简化）</h3><table>
+<thead>
+<tr>
+<th>进程类型</th>
+<th>oom_score_adj</th>
+<th>被杀概率</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>root 进程</td>
+<td>-1000</td>
+<td>永不</td>
+</tr>
+<tr>
+<td>系统关键服务（sshd）</td>
+<td>-1000</td>
+<td>永不</td>
+</tr>
+<tr>
+<td>普通用户进程</td>
+<td>0</td>
+<td>中等</td>
+</tr>
+<tr>
+<td>后台批处理任务</td>
+<td>100 ~ 1000</td>
+<td>高</td>
+</tr>
+<tr>
+<td>内存泄漏进程</td>
+<td>RSS 极大</td>
+<td>最高</td>
+</tr>
+</tbody></table>
+<h3 id="OOM-日志分析"><a href="#OOM-日志分析" class="headerlink" title="OOM 日志分析"></a>OOM 日志分析</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line"># 查看 OOM 日志</span><br><span class="line">dmesg | grep -i &quot;out of memory&quot;</span><br><span class="line"></span><br><span class="line"># 典型输出：</span><br><span class="line">[  123.456] Out of memory: Kill process 1234 (python) score 912 or sacrifice child</span><br><span class="line">[  123.457] Killed process 1234 (python) total-vm:1048576kB, anon-rss:524288kB</span><br><span class="line"></span><br><span class="line"># 查看进程 OOM 分数</span><br><span class="line">cat /proc/&lt;pid&gt;/oom_score</span><br><span class="line">cat /proc/&lt;pid&gt;/oom_score_adj  # 可调整，-1000 到 1000</span><br></pre></td></tr></table></figure>
+
+<h3 id="手动触发-OOM（测试用）"><a href="#手动触发-OOM（测试用）" class="headerlink" title="手动触发 OOM（测试用）"></a>手动触发 OOM（测试用）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line"># 方法1：分配超过物理内存</span><br><span class="line">stress --vm 1 --vm-bytes 100G --vm-keep</span><br><span class="line"></span><br><span class="line"># 方法2：通过 proc 接口</span><br><span class="line">echo f &gt; /proc/sysrq-trigger  # 手动触发 OOM</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Linux开发</category>
+      </categories>
+      <tags>
+        <tag>Linux kernel</tag>
+        <tag>内存管理</tag>
+        <tag>大模型</tag>
+        <tag>基础知识</tag>
+      </tags>
+  </entry>
+  <entry>
     <title>Linux Kernel之Kernel C</title>
     <url>/2026/03/26/linux-kernel-c/</url>
     <content><![CDATA[<blockquote>
@@ -395,8 +479,102 @@
       </categories>
       <tags>
         <tag>Linux kernel</tag>
-        <tag>C语言</tag>
         <tag>基础知识</tag>
+        <tag>C语言</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>Linux Kernel之进程管理</title>
+    <url>/2026/03/26/linux-kernel-process/</url>
+    <content><![CDATA[<blockquote>
+<p>Linux Kernel 的进程管理是其最核心的子系统之一。本文主要梳理fork&#x2F;exec、调度器(CFS)、进程状态转换的概念和使用方法</p>
+</blockquote>
+<span id="more"></span>
+
+<h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
+<li><a href="#%E7%9B%AE%E5%BD%95">目录</a></li>
+<li><a href="#%E8%BF%9B%E7%A8%8B%E7%AE%A1%E7%90%86%E5%9C%A8-kernel-%E4%B8%AD%E7%9A%84%E4%BD%8D%E7%BD%AE">进程管理在 Kernel 中的位置</a></li>
+<li><a href="#fork%E8%BF%9B%E7%A8%8B%E7%9A%84%E8%87%AA%E6%88%91%E5%A4%8D%E5%88%B6">Fork：进程的”自我复制”</a></li>
+<li><a href="#exec%E8%BF%9B%E7%A8%8B%E7%9A%84%E7%81%B5%E9%AD%82%E6%9B%BF%E6%8D%A2">Exec：进程的”灵魂替换”</a></li>
+<li><a href="#cfs%E6%98%AF%E4%BB%80%E4%B9%88">CFS是什么</a></li>
+<li><a href="#cfs%E6%95%B0%E6%8D%AE%E7%BB%93%E6%9E%84">CFS数据结构</a><ul>
+<li><a href="#1-%E8%B0%83%E5%BA%A6%E5%AE%9E%E4%BD%93sched_entity">1. 调度实体（sched_entity）</a></li>
+<li><a href="#2-cfs-%E8%BF%90%E8%A1%8C%E9%98%9F%E5%88%97cfs_rq">2. CFS 运行队列（cfs_rq）</a></li>
+</ul>
+</li>
+<li><a href="#cfs%E6%A0%B8%E5%BF%83%E6%9C%BA%E5%88%B6%E7%BA%A2%E9%BB%91%E6%A0%91--vruntime">CFS核心机制：红黑树 + vruntime</a><ul>
+<li><a href="#vruntime-%E8%AE%A1%E7%AE%97%E8%AF%A6%E8%A7%A3">vruntime 计算详解</a></li>
+<li><a href="#cfs-%E4%B8%8E%E5%AE%9E%E6%97%B6%E8%B0%83%E5%BA%A6%E5%99%A8%E5%AF%B9%E6%AF%94">CFS 与实时调度器对比</a></li>
+<li><a href="#cfs-%E7%9A%84%E5%B1%80%E9%99%90%E4%B8%8E%E6%BC%94%E8%BF%9B">CFS 的局限与演进</a></li>
+</ul>
+</li>
+</ul>
+<h2 id="进程管理在-Kernel-中的位置"><a href="#进程管理在-Kernel-中的位置" class="headerlink" title="进程管理在 Kernel 中的位置"></a>进程管理在 Kernel 中的位置</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│              用户空间                    │</span><br><span class="line">│    (Shell、应用程序、系统调用接口)          │</span><br><span class="line">└─────────────────────────────────────────┘</span><br><span class="line">                    │</span><br><span class="line">                    ▼ 系统调用 (int 0x80 / syscall)</span><br><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│           内核空间 - 进程管理子系统         │</span><br><span class="line">│                                         │</span><br><span class="line">│  ┌─────────────┐    ┌─────────────┐     │</span><br><span class="line">│  │  进程调度    │◄──►│  进程控制     │     │</span><br><span class="line">│  │  (Scheduler)│    │  (Fork/Exec)│     │</span><br><span class="line">│  │   CFS/RT    │    │             │     │</span><br><span class="line">│  └─────────────┘    └──────┬──────┘     │</span><br><span class="line">│                            │            │</span><br><span class="line">│  ┌─────────────┐    ┌──────┴──────┐     │ </span><br><span class="line">│  │  进程间通信  │    │  进程生命周期 │      │</span><br><span class="line">│  │ (IPC/信号)  │    │ (创建/终止)  │      │</span><br><span class="line">│  └─────────────┘    └─────────────┘     │</span><br><span class="line">│                                         │</span><br><span class="line">│  核心数据结构：task_struct、mm_struct、    │</span><br><span class="line">│             files_struct、signal_struct │</span><br><span class="line">└─────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
+
+<h2 id="Fork：进程的”自我复制”"><a href="#Fork：进程的”自我复制”" class="headerlink" title="Fork：进程的”自我复制”"></a>Fork：进程的”自我复制”</h2><p>一句话定义： fork() &#x3D; 细胞分裂。一个进程变成两个几乎完全相同的进程，父子共享代码，独立运行。</p>
+<h2 id="Exec：进程的”灵魂替换”"><a href="#Exec：进程的”灵魂替换”" class="headerlink" title="Exec：进程的”灵魂替换”"></a>Exec：进程的”灵魂替换”</h2><p>一句话定义：exec() &#x3D; 夺舍。保留进程外壳（PID、文件描述符、环境变量），替换内部代码、数据和堆栈。</p>
+<h2 id="CFS是什么"><a href="#CFS是什么" class="headerlink" title="CFS是什么"></a>CFS是什么</h2><p>CFS（Completely Fair Scheduler，完全公平调度器） &#x3D; Linux 的默认进程调度器，自 2.6.23（2007年）取代 O(1) 调度器，追求公平性而非绝对效率。</p>
+<p>核心思想：</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">让每个进程获得 &quot;公平的 CPU 时间份额&quot;</span><br><span class="line">    ↓</span><br><span class="line">用虚拟时间 vruntime 衡量&quot;应得&quot; vs &quot;实际获得&quot;</span><br><span class="line">    ↓</span><br><span class="line">总是选择 vruntime 最小的进程运行（最&quot;亏&quot;的优先补偿）</span><br></pre></td></tr></table></figure>
+
+<h2 id="CFS数据结构"><a href="#CFS数据结构" class="headerlink" title="CFS数据结构"></a>CFS数据结构</h2><h3 id="1-调度实体（sched-entity）"><a href="#1-调度实体（sched-entity）" class="headerlink" title="1. 调度实体（sched_entity）"></a>1. 调度实体（sched_entity）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// include/linux/sched.h</span><br><span class="line">struct sched_entity &#123;</span><br><span class="line">    struct load_weight  load;        // 权重（nice 值转换）</span><br><span class="line">    struct rb_node      run_node;    // 红黑树节点</span><br><span class="line">    u64                 vruntime;    // ⭐ 虚拟运行时间（关键）</span><br><span class="line">    u64                 exec_start;  // 开始执行时间</span><br><span class="line">    u64                 sum_exec_runtime;  // 总运行时间</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<h3 id="2-CFS-运行队列（cfs-rq）"><a href="#2-CFS-运行队列（cfs-rq）" class="headerlink" title="2. CFS 运行队列（cfs_rq）"></a>2. CFS 运行队列（cfs_rq）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// kernel/sched/sched.h</span><br><span class="line">struct cfs_rq &#123;</span><br><span class="line">    struct rb_root_cached  tasks_timeline;  // ⭐ 红黑树根</span><br><span class="line">    struct sched_entity    *curr;           // 当前运行进程</span><br><span class="line">    u64                    min_vruntime;      // 队列最小 vruntime</span><br><span class="line">    unsigned long          load_weight;     // 队列总权重</span><br><span class="line">    // ...</span><br><span class="line">&#125;;</span><br></pre></td></tr></table></figure>
+<h2 id="CFS核心机制：红黑树-vruntime"><a href="#CFS核心机制：红黑树-vruntime" class="headerlink" title="CFS核心机制：红黑树 + vruntime"></a>CFS核心机制：红黑树 + vruntime</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">┌─────────────────────────────────────────┐</span><br><span class="line">│           CFS 红黑树结构                 │</span><br><span class="line">│                                         │</span><br><span class="line">│              [P3: v=30]                 │</span><br><span class="line">│             /          \                │</span><br><span class="line">│      [P1: v=10]      [P5: v=50]         │</span><br><span class="line">│        /    \          /                │</span><br><span class="line">│  [P0: v=5] [P2: v=20] [P4: v=40]        │</span><br><span class="line">│                                         │</span><br><span class="line">│  最左侧节点 P0 (vruntime 最小) ← 下一个运行 │</span><br><span class="line">│                                         │</span><br><span class="line">│  插入位置：根据 vruntime 排序            │</span><br><span class="line">│  查询：O(log n) 取最左节点（实际优化为 O(1)）│</span><br><span class="line">└─────────────────────────────────────────┘</span><br></pre></td></tr></table></figure>
+<h3 id="vruntime-计算详解"><a href="#vruntime-计算详解" class="headerlink" title="vruntime 计算详解"></a>vruntime 计算详解</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 核心计算（kernel/sched/fair.c）</span><br><span class="line">vruntime += delta_exec * (NICE_0_LOAD / se-&gt;load.weight)</span><br><span class="line"></span><br><span class="line">// 其中：</span><br><span class="line">// delta_exec = 实际运行时间（纳秒）</span><br><span class="line">// NICE_0_LOAD = 1024（nice 0 的基准权重）</span><br><span class="line">// se-&gt;load.weight = 当前进程权重（由 nice 值决定）</span><br></pre></td></tr></table></figure>
+<ul>
+<li>nice 值小的进程（高优先级），vruntime 增长慢 → 更容易被选中</li>
+<li>nice 值大的进程（低优先级），vruntime 增长快 → 等待时间更长</li>
+</ul>
+<h3 id="CFS-与实时调度器对比"><a href="#CFS-与实时调度器对比" class="headerlink" title="CFS 与实时调度器对比"></a>CFS 与实时调度器对比</h3><table>
+<thead>
+<tr>
+<th>特性</th>
+<th>CFS（SCHED_NORMAL）</th>
+<th>实时调度器（SCHED_FIFO&#x2F;RR）</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>目标</td>
+<td>公平分享 CPU</td>
+<td>绝对优先级</td>
+</tr>
+<tr>
+<td>算法</td>
+<td>红黑树 + vruntime</td>
+<td>优先级队列</td>
+</tr>
+<tr>
+<td>抢占</td>
+<td>自愿（时间片用完）</td>
+<td>强制（高优先级立即抢占）</td>
+</tr>
+<tr>
+<td>nice&#x2F;优先级</td>
+<td>nice -20~+19</td>
+<td>1~99（实时优先级）</td>
+</tr>
+<tr>
+<td>适用场景</td>
+<td>普通进程</td>
+<td>实时任务（音视频、控制）</td>
+</tr>
+</tbody></table>
+<h3 id="CFS-的局限与演进"><a href="#CFS-的局限与演进" class="headerlink" title="CFS 的局限与演进"></a>CFS 的局限与演进</h3><p>局限</p>
+<ol>
+<li>对延迟敏感任务不友好（vruntime 累积延迟）</li>
+<li>多核负载均衡开销大</li>
+<li>无法感知业务优先级（仅 nice 值）</li>
+</ol>
+<p>演进：Sched Ext（BPF 调度器）</p>
+<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Linux 6.12+ 引入，允许 BPF 编写自定义调度策略</span><br><span class="line">SEC(&quot;sched_ext&quot;)</span><br><span class="line">int my_ai_scheduler(struct task_struct *p)</span><br><span class="line">&#123;</span><br><span class="line">    // 自定义逻辑：优先调度 AI 推理任务</span><br><span class="line">    if (is_ai_inference_task(p))</span><br><span class="line">        return SCX_WAKE_KICK;</span><br><span class="line">    </span><br><span class="line">    return SCX_WAKE_IDLE;</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+]]></content>
+      <categories>
+        <category>Linux开发</category>
+      </categories>
+      <tags>
+        <tag>Linux kernel</tag>
+        <tag>进程管理</tag>
+        <tag>基础概念</tag>
       </tags>
   </entry>
 </search>
