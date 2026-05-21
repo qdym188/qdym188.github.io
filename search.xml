@@ -364,14 +364,13 @@
   </entry>
   <entry>
     <title>Linux Kernel之Kernel C</title>
-    <url>/2026/03/26/linux-kernel-c/</url>
+    <url>/2026/03/30/linux-kernel-c/</url>
     <content><![CDATA[<blockquote>
 <p>Linux Kernel 主要用 C 语言编写，同时包含少量汇编和辅助语言，本文总结Kernel中的主要知识点</p>
 </blockquote>
 <span id="more"></span>
 
 <h2 id="目录"><a href="#目录" class="headerlink" title="目录"></a>目录</h2><ul>
-<li><a href="#%E7%9B%AE%E5%BD%95">目录</a></li>
 <li><a href="#%E8%AF%AD%E8%A8%80%E6%9E%84%E6%88%90">语言构成</a></li>
 <li><a href="#%E4%B8%BA%E4%BB%80%E4%B9%88%E7%94%A8-c-%E8%AF%AD%E8%A8%80">为什么用 C 语言？</a></li>
 <li><a href="#kernel-c-%E4%B8%8E%E6%99%AE%E9%80%9A-c-%E7%9A%84%E5%8C%BA%E5%88%AB">Kernel C 与普通 C 的区别</a><ul>
@@ -409,9 +408,63 @@
 </ul>
 </li>
 </ul>
-<h2 id="语言构成"><a href="#语言构成" class="headerlink" title="语言构成"></a>语言构成</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| 语言                    | 占比        | 用途                     |</span><br><span class="line">| ---------------------  | ---------   | ---------------------- |</span><br><span class="line">| **C 语言**              | ~98%        | 核心代码、驱动、文件系统、网络栈等      |</span><br><span class="line">| **汇编 (Assembly)**     | ~1%         | 启动代码、中断处理、架构相关底层操作     |</span><br><span class="line">| **Rust**               | &lt;1%（快速增长） | 新驱动、内存安全模块（Linux 6.1+） |</span><br><span class="line">| **Python/Perl/Shell**  | 构建工具      | 脚本配置、代码生成、测试           |</span><br></pre></td></tr></table></figure>
-
-<h2 id="为什么用-C-语言？"><a href="#为什么用-C-语言？" class="headerlink" title="为什么用 C 语言？"></a>为什么用 C 语言？</h2><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| 特性        | 原因                 |</span><br><span class="line">| --------- | ------------------ |</span><br><span class="line">| **底层控制**  | 直接操作内存、寄存器、硬件      |</span><br><span class="line">| **性能**    | 编译为机器码，无运行时开销      |</span><br><span class="line">| **可移植性**  | 几乎所有架构都有 C 编译器     |</span><br><span class="line">| **稳定成熟**  | 1972 年诞生，经过 50 年验证 |</span><br><span class="line">| **与硬件接近** | 支持内联汇编、内存布局精确控制    |</span><br></pre></td></tr></table></figure>
+<h2 id="语言构成"><a href="#语言构成" class="headerlink" title="语言构成"></a>语言构成</h2><table>
+<thead>
+<tr>
+<th>语言</th>
+<th>占比</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>C 语言</strong></td>
+<td>~98%</td>
+<td>核心代码、驱动、文件系统、网络栈等</td>
+</tr>
+<tr>
+<td><strong>汇编 (Assembly)</strong></td>
+<td>~1%</td>
+<td>启动代码、中断处理、架构相关底层操作</td>
+</tr>
+<tr>
+<td><strong>Rust</strong></td>
+<td>&lt;1%（快速增长）</td>
+<td>新驱动、内存安全模块（Linux 6.1+）</td>
+</tr>
+<tr>
+<td><strong>Python&#x2F;Perl&#x2F;Shell</strong></td>
+<td>构建工具</td>
+<td>脚本配置、代码生成、测试</td>
+</tr>
+</tbody></table>
+<h2 id="为什么用-C-语言？"><a href="#为什么用-C-语言？" class="headerlink" title="为什么用 C 语言？"></a>为什么用 C 语言？</h2><table>
+<thead>
+<tr>
+<th>特性</th>
+<th>原因</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>底层控制</strong></td>
+<td>直接操作内存、寄存器、硬件</td>
+</tr>
+<tr>
+<td><strong>性能</strong></td>
+<td>编译为机器码，无运行时开销</td>
+</tr>
+<tr>
+<td><strong>可移植性</strong></td>
+<td>几乎所有架构都有 C 编译器</td>
+</tr>
+<tr>
+<td><strong>稳定成熟</strong></td>
+<td>1972 年诞生，经过 50 年验证</td>
+</tr>
+<tr>
+<td><strong>与硬件接近</strong></td>
+<td>支持内联汇编、内存布局精确控制</td>
+</tr>
+</tbody></table>
 <h2 id="Kernel-C-与普通-C-的区别"><a href="#Kernel-C-与普通-C-的区别" class="headerlink" title="Kernel C 与普通 C 的区别"></a>Kernel C 与普通 C 的区别</h2><h3 id="没有标准库"><a href="#没有标准库" class="headerlink" title="没有标准库"></a>没有标准库</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 用户程序</span><br><span class="line">#include &lt;stdio.h&gt;   // ❌ Kernel 不能用</span><br><span class="line">printf(&quot;hello&quot;);     // ❌ 没有 printf</span><br><span class="line"></span><br><span class="line">// Kernel 代码</span><br><span class="line">#include &lt;linux/kernel.h&gt;  // ✅ Kernel 头文件</span><br><span class="line">printk(KERN_INFO &quot;hello&quot;); // ✅ Kernel 打印函数</span><br></pre></td></tr></table></figure>
 <h3 id="没有浮点运算"><a href="#没有浮点运算" class="headerlink" title="没有浮点运算"></a>没有浮点运算</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">double x = 1.5;  // ❌ Kernel 禁止浮点</span><br><span class="line">// 原因：保存/恢复浮点寄存器开销大，且不是所有架构都支持</span><br></pre></td></tr></table></figure>
 <h3 id="内存管理受限"><a href="#内存管理受限" class="headerlink" title="内存管理受限"></a>内存管理受限</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// 用户程序</span><br><span class="line">int *p = malloc(100);  // ❌ 没有 malloc</span><br><span class="line">free(p);               // ❌ 没有 free</span><br><span class="line"></span><br><span class="line">// Kernel 代码</span><br><span class="line">void *p = kmalloc(100, GFP_KERNEL);  // ✅ Kernel 内存分配</span><br><span class="line">kfree(p);                            // ✅ Kernel 释放</span><br></pre></td></tr></table></figure>
@@ -422,8 +475,35 @@
 
 <h2 id="指针和内存管理"><a href="#指针和内存管理" class="headerlink" title="指针和内存管理"></a>指针和内存管理</h2><h3 id="Kernel指针的特殊性"><a href="#Kernel指针的特殊性" class="headerlink" title="Kernel指针的特殊性"></a>Kernel指针的特殊性</h3><h4 id="1-多种地址空间"><a href="#1-多种地址空间" class="headerlink" title="1.多种地址空间"></a>1.多种地址空间</h4><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Kernel 中指针可能指向不同地址空间</span><br><span class="line">void *ptr;           // 虚拟地址（最常用）</span><br><span class="line">phys_addr_t paddr;   // 物理地址</span><br><span class="line">dma_addr_t daddr;    // DMA 总线地址</span><br><span class="line">__iomem void *io;    // 设备 I/O 内存（MMIO）</span><br></pre></td></tr></table></figure>
 <p>关键区别：</p>
-<figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">| 类型     | 说明                | 转换                                   |</span><br><span class="line">| ------ | ----------------- | ------------------------------------ |</span><br><span class="line">| 用户虚拟地址 | 进程私有空间 0-3GB      | `copy_from_user()`                   |</span><br><span class="line">| 内核虚拟地址 | 内核空间 3GB-4GB（32位） | 直接解引用                                |</span><br><span class="line">| 物理地址   | RAM 硬件地址          | `virt_to_phys()` / `phys_to_virt()`  |</span><br><span class="line">| I/O 内存 | 设备寄存器映射           | `ioremap()` / `readl()` / `writel()` |</span><br></pre></td></tr></table></figure>
-
+<table>
+<thead>
+<tr>
+<th>类型</th>
+<th>说明</th>
+<th>转换</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>用户虚拟地址</td>
+<td>进程私有空间 0-3GB</td>
+<td><code>copy_from_user()</code></td>
+</tr>
+<tr>
+<td>内核虚拟地址</td>
+<td>内核空间 3GB-4GB（32位）</td>
+<td>直接解引用</td>
+</tr>
+<tr>
+<td>物理地址</td>
+<td>RAM 硬件地址</td>
+<td><code>virt_to_phys()</code> &#x2F; <code>phys_to_virt()</code></td>
+</tr>
+<tr>
+<td>I&#x2F;O 内存</td>
+<td>设备寄存器映射</td>
+<td><code>ioremap()</code> &#x2F; <code>readl()</code> &#x2F; <code>writel()</code></td>
+</tr>
+</tbody></table>
 <h4 id="2-指针类型标记（Sparse-检查）"><a href="#2-指针类型标记（Sparse-检查）" class="headerlink" title="2.指针类型标记（Sparse 检查）"></a>2.指针类型标记（Sparse 检查）</h4><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">// Kernel 使用 __user、__kernel、__iomem 等标记</span><br><span class="line">// 帮助静态检查工具发现错误</span><br><span class="line"></span><br><span class="line">int copy_from_user(void *dst, const void __user *src, size_t n);</span><br><span class="line">//                    ↑ 内核空间      ↑ 用户空间指针标记</span><br><span class="line"></span><br><span class="line">void __iomem *reg = ioremap(0xFE000000, 0x1000);</span><br><span class="line">readl(reg);  // ✅ 正确</span><br><span class="line">*reg = 1;    // ❌ Sparse 会警告，必须用 writel()</span><br></pre></td></tr></table></figure>
 
 <h2 id="Kernel-内存管理核心机制"><a href="#Kernel-内存管理核心机制" class="headerlink" title="Kernel 内存管理核心机制"></a>Kernel 内存管理核心机制</h2><h3 id="内存分区（Zone）"><a href="#内存分区（Zone）" class="headerlink" title="内存分区（Zone）"></a>内存分区（Zone）</h3><figure class="highlight plaintext"><table><tr><td class="code"><pre><span class="line">物理内存 4GB</span><br><span class="line">├─ Zone DMA      (0-16MB)      ISA 设备兼容</span><br><span class="line">├─ Zone DMA32    (0-4GB)       32位设备兼容  </span><br><span class="line">└─ Zone Normal   (896MB-4GB)   常规内存（64位系统）</span><br></pre></td></tr></table></figure>
@@ -575,6 +655,64 @@
         <tag>Linux kernel</tag>
         <tag>进程管理</tag>
         <tag>基础概念</tag>
+      </tags>
+  </entry>
+  <entry>
+    <title>DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践</title>
+    <url>/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/</url>
+    <content><![CDATA[<h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><p>DeepSeek-V4-Flash 是 158B 参数的 MoE 模型。它的官方推理管线依赖 Hopper（SM90）专用特性——DeepGEMM、TMA、WGMMA。如果显卡架构低于 SM90，启动直接崩溃。</p>
+<p>目标是在 <strong>RTX 4090（SM89，Ada Lovelace）</strong> 上跑通这个模型。</p>
+<h2 id="问题拆解"><a href="#问题拆解" class="headerlink" title="问题拆解"></a>问题拆解</h2><p>启动崩溃的原因有四个：</p>
+<p><strong>1. DeepGEMM 算子无法运行。</strong> DeepGEMM 是 DeepSeek 自研的高性能 GEMM 库，只用 Hopper 指令集。SM89 上所有调用 DeepGEMM 的地方都会抛 <code>NotImplementedError</code>。</p>
+<p><strong>2. 自定义算子和硬件不兼容。</strong> 模型中有一个叫 Multi-head Hyper-Connection 的算子依赖 TileLang 编译管线，TileLang 又依赖 DeepGEMM，链条上任何一个环节不支持 SM89 就跑不了。</p>
+<p><strong>3. FP8 量化格式的兼容问题。</strong> 模型权重使用了 UE8M0 格式的 scale 因子，Triton 编译器无法直接处理这种数据类型，导致加载 kernel 时崩溃。</p>
+<p><strong>4. 并行策略有隐藏约束。</strong> 模型的 O 投影层要求张量并行度不超过 8，否则 tensor shape 会算错。</p>
+<p>这四个问题串在一起，任何一环不解决模型都起不来。</p>
+<h2 id="解决思路"><a href="#解决思路" class="headerlink" title="解决思路"></a>解决思路</h2><p>方案的特点可以总结为<strong>三件事</strong>：</p>
+<p><strong>一是全局旁路。</strong> DeepGEMM 的入口加一个架构检测开关，SM89 上自动走 PyTorch reference kernel 替代 DeepGEMM。代价是性能有损失，但能保证推理路径完整。</p>
+<p><strong>二是算子替换。</strong> MHC 算子用纯 Triton 重写。Triton 是 Python 写的 kernel 编译器，不依赖硬件架构。原来 TileLang 编译的 kernel 无法在 SM89 上编译，换成 Triton 版本就能正常跑了。</p>
+<p><strong>三是数据格式适配。</strong> 在调用 Triton kernel 之前，先把 UE8M0 格式的 scale 因子转成 FP32，再传入 kernel。相当于在数据入口加了一个翻译层。</p>
+<p>这三个改动覆盖了崩溃的全部根因。适配范围涉及 <strong>18 个源文件</strong>，以静态补丁包的方式注入容器。</p>
+<h2 id="性能基线"><a href="#性能基线" class="headerlink" title="性能基线"></a>性能基线</h2><p>修复启动崩溃后，模型可以正常推理了。当前性能：</p>
+<table>
+<thead>
+<tr>
+<th>硬件</th>
+<th>并行配置</th>
+<th>吞吐量</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>16 卡节点（RTX 4090 桌面版 × 16）</td>
+<td>TP&#x3D;8, DP&#x3D;2</td>
+<td><strong>~3.2 tok&#x2F;s</strong></td>
+</tr>
+<tr>
+<td>32 卡节点（RTX 4090 Laptop × 16GB × 32）</td>
+<td>TP&#x3D;8, PP&#x3D;2, DP&#x3D;1</td>
+<td><strong>~2.1 tok&#x2F;s</strong></td>
+</tr>
+</tbody></table>
+<p>作为参考，H100 上同模型的官方测速是 30+ tok&#x2F;s。差距不仅来自算力差异——RTX 4090 没有 NVLink，跨卡通信走 PCIe，带宽不到 NVLink 的十分之一；也没有 FP8 tensor core，FP8 矩阵乘在 SM89 上要回退到 FP32 模拟，吞吐折半。</p>
+<p><strong>3.2 tok&#x2F;s 不代表终点。</strong> 后面的优化工作围绕几个方向：MTP 投机解码（让一次推理产出多个 token）、CUDAGraph 捕获（消除 kernel launch 调度开销）、以及手工调优的 Triton kernel 替换热点算子。这部分下次再展开。</p>
+<h2 id="三条经验"><a href="#三条经验" class="headerlink" title="三条经验"></a>三条经验</h2><ol>
+<li><p><strong>架构门控比动态打补丁靠谱。</strong> 早期的方案用 monkey-patch 动态替换模型层的 forward 方法，结果触发了 PyTorch 的 Graph Break，调试成本反而更高。在算子入口用架构版本做条件分支，不破坏编译图，是最干净的方案。</p>
+</li>
+<li><p><strong>容器部署选静态文件注入。</strong> 18 个文件全部用 <code>cp -r</code> 复制进容器，不依赖 pip install 后的 patch 钩子。回退时换一套文件就行，可复现性好。</p>
+</li>
+<li><p><strong>性能天花板要先跑通再说。</strong> 启动都没过的时候谈 optim，没用。先解决掉所有 crash，拿到一个可测量的基线，才能知道瓶颈在哪、该怎么优化。</p>
+</li>
+</ol>
+]]></content>
+      <categories>
+        <category>技术实践</category>
+      </categories>
+      <tags>
+        <tag>DeepSeek</tag>
+        <tag>vLLM</tag>
+        <tag>GPU部署</tag>
+        <tag>SM89</tag>
+        <tag>AI Infra</tag>
       </tags>
   </entry>
 </search>

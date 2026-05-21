@@ -1,0 +1,209 @@
+<!DOCTYPE html><html lang="ch-CN" data-theme="light"><head><meta charset="UTF-8"><meta http-equiv="X-UA-Compatible" content="IE=edge"><meta name="viewport" content="width=device-width, initial-scale=1.0,viewport-fit=cover"><title>DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践 | 芯片码工的碎碎念</title><meta name="author" content="Cosmo Qiu"><meta name="copyright" content="Cosmo Qiu"><meta name="format-detection" content="telephone=no"><meta name="theme-color" content="#ffffff"><meta name="description" content="背景DeepSeek-V4-Flash 是 158B 参数的 MoE 模型。它的官方推理管线依赖 Hopper（SM90）专用特性——DeepGEMM、TMA、WGMMA。如果显卡架构低于 SM90，启动直接崩溃。 目标是在 RTX 4090（SM89，Ada Lovelace） 上跑通这个模型。 问题拆解启动崩溃的原因有四个： 1. DeepGEMM 算子无法运行。 DeepGEMM 是 Dee">
+<meta property="og:type" content="article">
+<meta property="og:title" content="DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践">
+<meta property="og:url" content="https://qdym188.github.io/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/index.html">
+<meta property="og:site_name" content="芯片码工的碎碎念">
+<meta property="og:description" content="背景DeepSeek-V4-Flash 是 158B 参数的 MoE 模型。它的官方推理管线依赖 Hopper（SM90）专用特性——DeepGEMM、TMA、WGMMA。如果显卡架构低于 SM90，启动直接崩溃。 目标是在 RTX 4090（SM89，Ada Lovelace） 上跑通这个模型。 问题拆解启动崩溃的原因有四个： 1. DeepGEMM 算子无法运行。 DeepGEMM 是 Dee">
+<meta property="og:locale" content="ch_CN">
+<meta property="og:image" content="https://qdym188.github.io/img/butterfly-icon.png">
+<meta property="article:published_time" content="2026-05-21T02:00:00.000Z">
+<meta property="article:modified_time" content="2026-05-21T03:32:30.211Z">
+<meta property="article:author" content="Cosmo Qiu">
+<meta property="article:tag" content="AI Infra">
+<meta property="article:tag" content="DeepSeek">
+<meta property="article:tag" content="GPU部署">
+<meta property="article:tag" content="SM89">
+<meta property="article:tag" content="vLLM">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:image" content="https://qdym188.github.io/img/butterfly-icon.png"><script type="application/ld+json">{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践",
+  "url": "https://qdym188.github.io/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/",
+  "image": "https://qdym188.github.io/img/butterfly-icon.png",
+  "datePublished": "2026-05-21T02:00:00.000Z",
+  "dateModified": "2026-05-21T03:32:30.211Z",
+  "author": [
+    {
+      "@type": "Person",
+      "name": "Cosmo Qiu",
+      "url": "https://qdym188.github.io"
+    }
+  ]
+}</script><link rel="shortcut icon" href="/img/favicon.png"><link rel="canonical" href="https://qdym188.github.io/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/index.html"><link rel="preconnect" href="//cdn.jsdelivr.net"/><link rel="preconnect" href="//busuanzi.ibruce.info"/><link rel="stylesheet" href="/css/index.css?v=5.5.4"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@7.1.0/css/all.min.css"><script>
+    (() => {
+      
+    const saveToLocal = {
+      set: (key, value, ttl) => {
+        if (!ttl) return
+        const expiry = Date.now() + ttl * 86400000
+        localStorage.setItem(key, JSON.stringify({ value, expiry }))
+      },
+      get: key => {
+        const itemStr = localStorage.getItem(key)
+        if (!itemStr) return undefined
+        const { value, expiry } = JSON.parse(itemStr)
+        if (Date.now() > expiry) {
+          localStorage.removeItem(key)
+          return undefined
+        }
+        return value
+      }
+    }
+
+    window.btf = {
+      saveToLocal,
+      getScript: (url, attr = {}) => new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = url
+        script.async = true
+        Object.entries(attr).forEach(([key, val]) => script.setAttribute(key, val))
+        script.onload = script.onreadystatechange = () => {
+          if (!script.readyState || /loaded|complete/.test(script.readyState)) resolve()
+        }
+        script.onerror = reject
+        document.head.appendChild(script)
+      }),
+      getCSS: (url, id) => new Promise((resolve, reject) => {
+        const link = document.createElement('link')
+        link.rel = 'stylesheet'
+        link.href = url
+        if (id) link.id = id
+        link.onload = link.onreadystatechange = () => {
+          if (!link.readyState || /loaded|complete/.test(link.readyState)) resolve()
+        }
+        link.onerror = reject
+        document.head.appendChild(link)
+      }),
+      addGlobalFn: (key, fn, name = false, parent = window) => {
+        if (!false && key.startsWith('pjax')) return
+        const globalFn = parent.globalFn || {}
+        globalFn[key] = globalFn[key] || {}
+        globalFn[key][name || Object.keys(globalFn[key]).length] = fn
+        parent.globalFn = globalFn
+      }
+    }
+  
+      
+      const activateDarkMode = () => {
+        document.documentElement.setAttribute('data-theme', 'dark')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#0d0d0d')
+        }
+      }
+      const activateLightMode = () => {
+        document.documentElement.setAttribute('data-theme', 'light')
+        if (document.querySelector('meta[name="theme-color"]') !== null) {
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+        }
+      }
+
+      btf.activateDarkMode = activateDarkMode
+      btf.activateLightMode = activateLightMode
+
+      const theme = saveToLocal.get('theme')
+    
+          theme === 'dark' ? activateDarkMode() : theme === 'light' ? activateLightMode() : null
+        
+      
+      const asideStatus = saveToLocal.get('aside-status')
+      if (asideStatus !== undefined) {
+        document.documentElement.classList.toggle('hide-aside', asideStatus === 'hide')
+      }
+    
+      
+    const detectApple = () => {
+      if (/iPad|iPhone|iPod|Macintosh/.test(navigator.userAgent)) {
+        document.documentElement.classList.add('apple')
+      }
+    }
+    detectApple()
+  
+    })()
+  </script><script>const GLOBAL_CONFIG = {
+  root: '/',
+  algolia: undefined,
+  localSearch: undefined,
+  translate: undefined,
+  highlight: {"plugin":"highlight.js","highlightCopy":true,"highlightLang":true,"highlightHeightLimit":false,"highlightFullpage":false,"highlightMacStyle":false},
+  copy: {
+    success: 'Copy Successful',
+    error: 'Copy Failed',
+    noSupport: 'Browser Not Supported'
+  },
+  relativeDate: {
+    homepage: false,
+    post: false
+  },
+  runtime: '',
+  dateSuffix: {
+    just: 'Just now',
+    min: 'minutes ago',
+    hour: 'hours ago',
+    day: 'days ago',
+    month: 'months ago'
+  },
+  copyright: undefined,
+  lightbox: 'null',
+  Snackbar: undefined,
+  infinitegrid: {
+    js: 'https://cdn.jsdelivr.net/npm/@egjs/infinitegrid@4.13.0/dist/infinitegrid.min.js',
+    buttonText: 'Load More'
+  },
+  isPhotoFigcaption: false,
+  islazyloadPlugin: false,
+  isAnchor: false,
+  percent: {
+    toc: true,
+    rightside: false,
+  },
+  autoDarkmode: false
+}</script><script id="config-diff">var GLOBAL_CONFIG_SITE = {
+  title: 'DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践',
+  isHighlightShrink: false,
+  isToc: true,
+  pageType: 'post'
+}</script><meta name="generator" content="Hexo 8.1.1"></head><body><div class="post" id="body-wrap"><header class="post-bg" id="page-header"><nav id="nav"><span id="blog-info"><a class="nav-site-title" href="/"><span class="site-name">芯片码工的碎碎念</span></a><a class="nav-page-title" href="/"><span class="site-name">DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践</span><span class="site-name"><i class="fa-solid fa-circle-arrow-left"></i><span>  Back to Home</span></span></a></span><div id="menus"></div></nav><div id="post-info"><h1 class="post-title">DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践</h1><div id="post-meta"><div class="meta-firstline"><span class="post-meta-date"><i class="far fa-calendar-alt fa-fw post-meta-icon"></i><span class="post-meta-label">Created</span><time class="post-meta-date-created" datetime="2026-05-21T02:00:00.000Z" title="Created 2026-05-21 10:00:00">2026-05-21</time><span class="post-meta-separator">|</span><i class="fas fa-history fa-fw post-meta-icon"></i><span class="post-meta-label">Updated</span><time class="post-meta-date-updated" datetime="2026-05-21T03:32:30.211Z" title="Updated 2026-05-21 11:32:30">2026-05-21</time></span><span class="post-meta-categories"><span class="post-meta-separator">|</span><i class="fas fa-inbox fa-fw post-meta-icon"></i><a class="post-meta-categories" href="/categories/%E6%8A%80%E6%9C%AF%E5%AE%9E%E8%B7%B5/">技术实践</a></span></div><div class="meta-secondline"><span class="post-meta-separator">|</span><span class="post-meta-pv-cv" id="" data-flag-title=""><i class="far fa-eye fa-fw post-meta-icon"></i><span class="post-meta-label">Post Views:</span><span id="busuanzi_value_page_pv"><i class="fa-solid fa-spinner fa-spin"></i></span></span></div></div></div></header><main class="layout" id="content-inner"><div id="post"><article class="container post-content" id="article-container"><h2 id="背景"><a href="#背景" class="headerlink" title="背景"></a>背景</h2><p>DeepSeek-V4-Flash 是 158B 参数的 MoE 模型。它的官方推理管线依赖 Hopper（SM90）专用特性——DeepGEMM、TMA、WGMMA。如果显卡架构低于 SM90，启动直接崩溃。</p>
+<p>目标是在 <strong>RTX 4090（SM89，Ada Lovelace）</strong> 上跑通这个模型。</p>
+<h2 id="问题拆解"><a href="#问题拆解" class="headerlink" title="问题拆解"></a>问题拆解</h2><p>启动崩溃的原因有四个：</p>
+<p><strong>1. DeepGEMM 算子无法运行。</strong> DeepGEMM 是 DeepSeek 自研的高性能 GEMM 库，只用 Hopper 指令集。SM89 上所有调用 DeepGEMM 的地方都会抛 <code>NotImplementedError</code>。</p>
+<p><strong>2. 自定义算子和硬件不兼容。</strong> 模型中有一个叫 Multi-head Hyper-Connection 的算子依赖 TileLang 编译管线，TileLang 又依赖 DeepGEMM，链条上任何一个环节不支持 SM89 就跑不了。</p>
+<p><strong>3. FP8 量化格式的兼容问题。</strong> 模型权重使用了 UE8M0 格式的 scale 因子，Triton 编译器无法直接处理这种数据类型，导致加载 kernel 时崩溃。</p>
+<p><strong>4. 并行策略有隐藏约束。</strong> 模型的 O 投影层要求张量并行度不超过 8，否则 tensor shape 会算错。</p>
+<p>这四个问题串在一起，任何一环不解决模型都起不来。</p>
+<h2 id="解决思路"><a href="#解决思路" class="headerlink" title="解决思路"></a>解决思路</h2><p>方案的特点可以总结为<strong>三件事</strong>：</p>
+<p><strong>一是全局旁路。</strong> DeepGEMM 的入口加一个架构检测开关，SM89 上自动走 PyTorch reference kernel 替代 DeepGEMM。代价是性能有损失，但能保证推理路径完整。</p>
+<p><strong>二是算子替换。</strong> MHC 算子用纯 Triton 重写。Triton 是 Python 写的 kernel 编译器，不依赖硬件架构。原来 TileLang 编译的 kernel 无法在 SM89 上编译，换成 Triton 版本就能正常跑了。</p>
+<p><strong>三是数据格式适配。</strong> 在调用 Triton kernel 之前，先把 UE8M0 格式的 scale 因子转成 FP32，再传入 kernel。相当于在数据入口加了一个翻译层。</p>
+<p>这三个改动覆盖了崩溃的全部根因。适配范围涉及 <strong>18 个源文件</strong>，以静态补丁包的方式注入容器。</p>
+<h2 id="性能基线"><a href="#性能基线" class="headerlink" title="性能基线"></a>性能基线</h2><p>修复启动崩溃后，模型可以正常推理了。当前性能：</p>
+<table>
+<thead>
+<tr>
+<th>硬件</th>
+<th>并行配置</th>
+<th>吞吐量</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>16 卡节点（RTX 4090 桌面版 × 16）</td>
+<td>TP&#x3D;8, DP&#x3D;2</td>
+<td><strong>~3.2 tok&#x2F;s</strong></td>
+</tr>
+<tr>
+<td>32 卡节点（RTX 4090 Laptop × 16GB × 32）</td>
+<td>TP&#x3D;8, PP&#x3D;2, DP&#x3D;1</td>
+<td><strong>~2.1 tok&#x2F;s</strong></td>
+</tr>
+</tbody></table>
+<p>作为参考，H100 上同模型的官方测速是 30+ tok&#x2F;s。差距不仅来自算力差异——RTX 4090 没有 NVLink，跨卡通信走 PCIe，带宽不到 NVLink 的十分之一；也没有 FP8 tensor core，FP8 矩阵乘在 SM89 上要回退到 FP32 模拟，吞吐折半。</p>
+<p><strong>3.2 tok&#x2F;s 不代表终点。</strong> 后面的优化工作围绕几个方向：MTP 投机解码（让一次推理产出多个 token）、CUDAGraph 捕获（消除 kernel launch 调度开销）、以及手工调优的 Triton kernel 替换热点算子。这部分下次再展开。</p>
+<h2 id="三条经验"><a href="#三条经验" class="headerlink" title="三条经验"></a>三条经验</h2><ol>
+<li><p><strong>架构门控比动态打补丁靠谱。</strong> 早期的方案用 monkey-patch 动态替换模型层的 forward 方法，结果触发了 PyTorch 的 Graph Break，调试成本反而更高。在算子入口用架构版本做条件分支，不破坏编译图，是最干净的方案。</p>
+</li>
+<li><p><strong>容器部署选静态文件注入。</strong> 18 个文件全部用 <code>cp -r</code> 复制进容器，不依赖 pip install 后的 patch 钩子。回退时换一套文件就行，可复现性好。</p>
+</li>
+<li><p><strong>性能天花板要先跑通再说。</strong> 启动都没过的时候谈 optim，没用。先解决掉所有 crash，拿到一个可测量的基线，才能知道瓶颈在哪、该怎么优化。</p>
+</li>
+</ol>
+</article><div class="post-copyright"><div class="post-copyright__author"><span class="post-copyright-meta"><i class="fas fa-circle-user fa-fw"></i>Author: </span><span class="post-copyright-info"><a href="https://qdym188.github.io">Cosmo Qiu</a></span></div><div class="post-copyright__type"><span class="post-copyright-meta"><i class="fas fa-square-arrow-up-right fa-fw"></i>Link: </span><span class="post-copyright-info"><a href="https://qdym188.github.io/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/">https://qdym188.github.io/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/</a></span></div><div class="post-copyright__notice"><span class="post-copyright-meta"><i class="fas fa-circle-exclamation fa-fw"></i>Copyright Notice: </span><span class="post-copyright-info">All articles on this blog are licensed under <a target="_blank" rel="noopener" href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a> unless otherwise stated.</span></div></div><div class="tag_share"><div class="post-meta__tag-list"><a class="post-meta__tags" href="/tags/DeepSeek/">DeepSeek</a><a class="post-meta__tags" href="/tags/vLLM/">vLLM</a><a class="post-meta__tags" href="/tags/GPU%E9%83%A8%E7%BD%B2/">GPU部署</a><a class="post-meta__tags" href="/tags/SM89/">SM89</a><a class="post-meta__tags" href="/tags/AI-Infra/">AI Infra</a></div><div class="post-share"><div class="social-share" data-image="/img/butterfly-icon.png" data-sites="facebook,x,wechat,weibo,qq"></div><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/css/share.min.css" media="print" onload="this.media='all'"><script src="https://cdn.jsdelivr.net/npm/butterfly-extsrc@1.1.6/sharejs/dist/js/social-share.min.js" defer></script></div></div><nav class="pagination-post" id="pagination"><a class="pagination-related full-width" href="/2026/03/31/linux-kernel-memory-management/" title="linux kernel之内存管理"><div class="cover" style="background: var(--default-bg-color)"></div><div class="info text-right"><div class="info-1"><div class="info-item-1">Next</div><div class="info-item-2">linux kernel之内存管理</div></div><div class="info-2"><div class="info-item-1">目录 目录 一、物理内存 vs 虚拟内存 二、页表（Page Table） 为什么需要页表？ 关键数据结构   三、malloc 底层实现 用户态 malloc 调用链 内核态实现 malloc 分配策略 触发条件 OOM Killer 选择算法（oom_badness） 选择优先级（简化） OOM 日志分析 手动触发 OOM（测试用）    一、物理内存 vs 虚拟内存核心概念对比    特性 物理内存 虚拟内存    本质 真实的 RAM 硬件 进程看到的抽象地址空间   地址范围 0 ~ 物理内存大小 0 ~ 2^64（64位系统）   隔离性 全局共享，无隔离 每个进程独立，互相隔离   连续性 必须连续分配 可以非连续（通过页表映射）   大小限制 受硬件限制 可远大于物理内存（交换）   示意图 123456789101112进程A的虚拟地址空间              物理内存 (RAM)┌─────────────────┐              ┌─────────────┐│   0-3G 用户空间  │              │          ...</div></div></div></a></nav></div><div class="aside-content" id="aside-content"><div class="card-widget card-info text-center"><div class="avatar-img"><img src="/img/butterfly-icon.png" onerror="this.onerror=null;this.src='/img/friend_404.gif'" alt="avatar"/></div><div class="author-info-name">Cosmo Qiu</div><div class="author-info-description">欢迎来到芯片码工的碎碎念，这里是一个分享技术与生活的个人博客。无论是技术随想还是日常生活的点滴，我都会在这里与你分享我的见解和经验。希望我的博客能为你带来启发和帮助！</div><div class="site-data"><a href="/archives/"><div class="headline">Articles</div><div class="length-num">5</div></a><a href="/tags/"><div class="headline">Tags</div><div class="length-num">16</div></a><a href="/categories/"><div class="headline">Categories</div><div class="length-num">3</div></a></div><a id="card-info-btn" target="_blank" rel="noopener" href="https://github.com/xxxxxx"><i class="fab fa-github"></i><span>Follow Me</span></a></div><div class="card-widget card-announcement"><div class="item-headline"><i class="fas fa-bullhorn fa-shake"></i><span>Announcement</span></div><div class="announcement_content">This is my Blog</div></div><div class="sticky_layout"><div class="card-widget" id="card-toc"><div class="item-headline"><i class="fas fa-stream"></i><span>Contents</span><span class="toc-percentage"></span></div><div class="toc-content"><ol class="toc"><li class="toc-item toc-level-2"><a class="toc-link" href="#%E8%83%8C%E6%99%AF"><span class="toc-number">1.</span> <span class="toc-text">背景</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E9%97%AE%E9%A2%98%E6%8B%86%E8%A7%A3"><span class="toc-number">2.</span> <span class="toc-text">问题拆解</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E8%A7%A3%E5%86%B3%E6%80%9D%E8%B7%AF"><span class="toc-number">3.</span> <span class="toc-text">解决思路</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E6%80%A7%E8%83%BD%E5%9F%BA%E7%BA%BF"><span class="toc-number">4.</span> <span class="toc-text">性能基线</span></a></li><li class="toc-item toc-level-2"><a class="toc-link" href="#%E4%B8%89%E6%9D%A1%E7%BB%8F%E9%AA%8C"><span class="toc-number">5.</span> <span class="toc-text">三条经验</span></a></li></ol></div></div><div class="card-widget card-recent-post"><div class="item-headline"><i class="fas fa-history"></i><span>Recent Posts</span></div><div class="aside-list"><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/05/21/deepseek-v4-flash-sm89-deployment-practice/" title="DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践">DeepSeek-V4-Flash 在 Ada 架构上的部署：SM89 适配实践</a><time datetime="2026-05-21T02:00:00.000Z" title="Created 2026-05-21 10:00:00">2026-05-21</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/31/linux-kernel-memory-management/" title="linux kernel之内存管理">linux kernel之内存管理</a><time datetime="2026-03-31T08:19:54.000Z" title="Created 2026-03-31 16:19:54">2026-03-31</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/30/linux-kernel-c/" title="Linux Kernel之Kernel C">Linux Kernel之Kernel C</a><time datetime="2026-03-30T06:17:01.000Z" title="Created 2026-03-30 14:17:01">2026-03-30</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/26/linux-kernel-process/" title="Linux Kernel之进程管理">Linux Kernel之进程管理</a><time datetime="2026-03-26T05:48:00.000Z" title="Created 2026-03-26 13:48:00">2026-03-26</time></div></div><div class="aside-list-item no-cover"><div class="content"><a class="title" href="/2026/03/18/hexo-github-pages-guide/" title="Hexo + GitHub Pages 完整指南：从安装到美化">Hexo + GitHub Pages 完整指南：从安装到美化</a><time datetime="2026-03-18T11:18:00.000Z" title="Created 2026-03-18 19:18:00">2026-03-18</time></div></div></div></div></div></div></main><footer id="footer"><div class="footer-other"><div class="footer-copyright"><span class="copyright">&copy;&nbsp;2025 - 2026 By Cosmo Qiu</span><span class="framework-info"><span>Framework </span><a target="_blank" rel="noopener" href="https://hexo.io">Hexo 8.1.1</a><span class="footer-separator">|</span><span>Theme </span><a target="_blank" rel="noopener" href="https://github.com/jerryc127/hexo-theme-butterfly">Butterfly 5.5.4</a></span></div></div></footer></div><div id="rightside"><div id="rightside-config-hide"><button id="readmode" type="button" title="Reading Mode"><i class="fas fa-book-open"></i></button><button id="darkmode" type="button" title="Toggle Between Light and Dark Mode"><i class="fas fa-adjust"></i></button><button id="hide-aside-btn" type="button" title="Toggle Between Single-column and Double-column"><i class="fas fa-arrows-alt-h"></i></button></div><div id="rightside-config-show"><button id="rightside-config" type="button" title="Settings"><i class="fas fa-cog fa-spin"></i></button><button class="close" id="mobile-toc-button" type="button" title="Table of Contents"><i class="fas fa-list-ul"></i></button><button id="go-up" type="button" title="Back to Top"><span class="scroll-percent"></span><i class="fas fa-arrow-up"></i></button></div></div><div><script src="/js/utils.js?v=5.5.4"></script><script src="/js/main.js?v=5.5.4"></script><div class="js-pjax"></div><script async data-pjax src="//busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script></div></body></html>
